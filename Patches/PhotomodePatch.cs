@@ -8,16 +8,14 @@ namespace SprocketMultiplayer.Patches {
     [HarmonyPatch]
     public static class PhotoModeBlockPatch {
         static MethodBase TargetMethod() {
-            string[] candidateTypeNames = 
-            {
+            string[] candidateTypeNames = {
                 "PhotoModeManager",
                 "PhotoMode",
                 "PhotoModeController",
                 "PhotoModeBehaviour"
             };
 
-            string[] candidateMethodNames =
-            {
+            string[] candidateMethodNames = {
                 "TogglePhotoMode",
                 "Toggle",
                 "EnterPhotoMode",
@@ -43,8 +41,7 @@ namespace SprocketMultiplayer.Patches {
         }
 
         static bool Prefix(){
-            if (PhotomodeBlock.IsMultiplayer)
-            {
+            if (PhotomodeBlock.IsMultiplayer) {
                 MelonLogger.Msg("[PhotoModeBlock] Prevented PhotoMode use in MP");
                 return false;
             }
@@ -52,8 +49,7 @@ namespace SprocketMultiplayer.Patches {
             return true;
         }
         
-        static bool Prepare()
-        {
+        static bool Prepare() {
             // only apply this patch if multiplayer is enabled
             return SprocketMultiplayer.Core.PhotomodeBlock.IsMultiplayer;
         }

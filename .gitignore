@@ -1,1 +1,7 @@
 /Unused/
+/bin/Debug/
+/obj/Debug/
+/.idea/
+SprocketMultiplayer.sln.DotSettings.user
+SprocketMultiplayer.sln
+SprocketMultiplayer.csproj

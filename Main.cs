@@ -79,12 +79,10 @@ namespace SprocketMultiplayer{
             }
         }
 
-        public override void OnUpdate()
-        {
-            if (network == null) return; // avoid NullReferenceException
+        public override void OnUpdate() {
+            if (network == null) return;
             network.PollEvents();
-            if (!consoleSpawned)
-            {
+            if (!consoleSpawned) {
                 TrySpawnConsole(); //keep trying until succeed
             }
         }

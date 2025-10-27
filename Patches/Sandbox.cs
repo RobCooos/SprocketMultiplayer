@@ -1,7 +1,5 @@
-namespace SprocketMultiplayer.Patches
-{
-    public class Sandbox
-    {
+namespace SprocketMultiplayer.Patches {
+    public class Sandbox {
         
     }
 }

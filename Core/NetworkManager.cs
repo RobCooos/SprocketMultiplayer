@@ -7,8 +7,7 @@ using MelonLoader;
 
 namespace SprocketMultiplayer
 {
-    public class NetworkManager
-    {
+    public class NetworkManager {
         private TcpListener server;
         private TcpClient client;
         private NetworkStream stream;
@@ -19,7 +18,7 @@ namespace SprocketMultiplayer
         public bool IsClient { get; private set; }
 
         public int CurrentPort { get; private set; }
-        public string CurrentIP { get; private set; } = "127.0.0.1"; //TBD: receive actual IP
+        public string CurrentIP { get; private set; } = "127.0.0.1"; //TODO: receive actual IP
 
         public int ClientCount => connectedClients.Count;
         private readonly List<string> connectedClients = new List<string>();

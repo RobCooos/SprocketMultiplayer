@@ -1,7 +1,5 @@
-namespace SprocketMultiplayer.Patches
-{
-    public class InputPatch
-    {
+namespace SprocketMultiplayer.Patches {
+    public class InputPatch {
         
     }
 }
