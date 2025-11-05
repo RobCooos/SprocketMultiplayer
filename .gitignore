@@ -1,7 +1,16 @@
-/Unused/
-/bin/Debug/
-/obj/Debug/
-/.idea/
-SprocketMultiplayer.sln.DotSettings.user
-SprocketMultiplayer.sln
-SprocketMultiplayer.csproj
+# Build artifacts
+bin/
+obj/
+
+# IDE junk
+.idea/
+.vs/
+*.user
+*.DotSettings.user
+
+# Misc
+Unused/
+
+# Logs, temp, etc.
+*.log
+*.tmp
