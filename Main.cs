@@ -13,14 +13,18 @@ namespace SprocketMultiplayer{
         private const int MaxRetryAttempts = 3;
         private bool consoleSpawned = false;
         private int frames = 0;
+        private static bool photomodeWarning = false;
+        
         
         
         public override void OnInitializeMelon() {
+            Il2CppInterop.Runtime.Injection.ClassInjector.RegisterTypeInIl2Cpp<Menu.HandleClicks>();
             try {
                 network = new NetworkManager() ??
                           throw new System.Exception("NetworkManager constructor returned null");
                 ClassInjector.RegisterTypeInIl2Cpp<InputHandler>();
                 ClassInjector.RegisterTypeInIl2Cpp<SprocketMultiplayer.UI.Console>();
+                
                 MelonLogger.Msg("Sprocket Multiplayer initialized successfully.");
             }
             catch (System.Exception ex) {
@@ -28,6 +32,23 @@ namespace SprocketMultiplayer{
                 network = null; // explicit null so OnUpdate knows not to use it
             }
             new HarmonyLib.Harmony("SprocketMultiplayer").PatchAll();
+            if (!photomodeWarning) {
+                ShowPhotomodeWarning();
+                photomodeWarning = true;
+            }
+
+        }
+
+        private static void ShowPhotomodeWarning() {
+            MelonLogger.Warning(
+                "\n========================================================\n" +
+                "PLEASE NOTE!\n" +
+                "Photomode is disabled while using Sprocket Multiplayer Sessions.\n" +
+                "This is done to prevent users stopping time while in-game.\n" +
+                "Photomode not working IS NOT a bug, but an intended block.\n" +
+                "Thank you for trying the mod, and have fun!\n" +
+                "========================================================"
+            );
         }
 
         public override void OnSceneWasLoaded(int buildIndex, string sceneName) {

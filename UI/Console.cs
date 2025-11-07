@@ -224,10 +224,7 @@ namespace SprocketMultiplayer.UI
                     AddLog("clients             - Show connected clients (Host only)");
                     AddLog("clear               - Clear the console log");
                     AddLog("time                - Display system time");
-                    AddLog("spawn_vehicle       - Spawn a vehicle nearby");
-                    AddLog("getscenecomp        - Display all scene components (Debug only)");
                     AddLog("info                - Show mod information");
-                   //  AddLog("bp_debug             - Try and locate Blueprint (Debug only)"); <-- Scrapped
                     AddLog("help                - Display this help list");
                     AddLog("─────────────────────────────");
                     break;
@@ -237,7 +234,10 @@ namespace SprocketMultiplayer.UI
                     break;
 
                 case "info":
-                    AddLog("Sprocket Multiplayer v0.5");
+                    AddLog("Currently running Sprocket Multiplayer v0.7.");
+                    AddLog("Created with love by RobCos!");
+                    AddLog("Don't be afraid to DM me in Discord if you find a bug.");
+                    AddLog("Made with love from Kazakhstan!");
                     break;
                 
                 case "clear":
@@ -271,56 +271,6 @@ namespace SprocketMultiplayer.UI
                     }
 
                     AddLog("-----------------------");
-                    break;
-                
-                case "getscenecomp": {
-                    outputLog.Add("Logging Scenario components and children via MelonLogger...");
-
-                    // Find the Scenario root
-                    var scenarioGO = GameObject.Find("Scenario");
-                    if (scenarioGO == null) {
-                        outputLog.Add("Scenario GameObject not found.");
-                        break;
-                    }
-
-                    void LogComponents(GameObject go) {
-                        var comps = go.GetComponents<Component>();
-                        string lastCompName = null;
-                        int count = 0;
-
-                        foreach (var comp in comps) {
-                            string compName = comp.GetType().Name;
-
-                            if (compName == lastCompName) {
-                                count++;
-                            }
-                            else {
-                                if (lastCompName != null)
-                                    MelonLogger.Msg($"GameObject: {go.name} - Component: {lastCompName} x{count}");
-                                lastCompName = compName;
-                                count = 1;
-                            }
-                        }
-
-                        if (lastCompName != null)
-                            MelonLogger.Msg($"GameObject: {go.name} - Component: {lastCompName} x{count}");
-
-                        // Recursively log children — safe for IL2CPP
-                        for (int i = 0; i < go.transform.childCount; i++) {
-                            var child = go.transform.GetChild(i).gameObject;
-                            LogComponents(child);
-                        }
-                    }
-
-                    LogComponents(scenarioGO);
-
-                    outputLog.Add("Done logging Scenario components. Check MelonLogger console.");
-                    break;
-                }
-                
-                case "spawn_vehicle":
-                    //placeholder
-                    AddLog("Not enough parameters. Usage: spawn_vehicle <BlueprintName> <Team> <AI? (y/n)>");
                     break;
                 
                 case "clients": 
