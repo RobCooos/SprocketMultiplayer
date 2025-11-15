@@ -1,9 +1,12 @@
+using System.Linq;
+using Il2CppSprocket.Gameplay.VehicleControl;
+using Il2CppSprocket.PlayerControl;
 using UnityEngine;
 using MelonLoader;
 using UnityEngine.InputSystem;
 using SprocketMultiplayer.UI;
 
-namespace SprocketMultiplayer {
+namespace SprocketMultiplayer.Core {
     public class InputHandler : MonoBehaviour {
         public NetworkManager network;
         private Console consoleInstance;
@@ -34,6 +37,38 @@ namespace SprocketMultiplayer {
             if (Keyboard.current.pKey.wasPressedThisFrame) {
                 MelonLogger.Msg("Pinging host...");
                 network?.Send("Ping!");
+            }
+            
+            if (Keyboard.current.f6Key.wasPressedThisFrame) {
+                if (Keyboard.current.f6Key.wasPressedThisFrame) {
+                    
+
+                    MelonLogger.Msg("=== SCENE INSPECTION ===");
+                    SceneLogger.LogSceneDetails();
+                    SceneLogger.LogVehiclesAdvanced();
+                    SceneLogger.LogControlAssignments();
+                    SceneLogger.LogSpawners();
+                    SceneLogger.LogPlayerLinks();
+                    SceneLogger.LogPlayerFields();
+                    
+
+                    var vehiclesWithControl = GameObject.FindObjectsOfType<GameObject>(true)
+                        .Where(go =>
+                        {
+                            var comps = go.GetComponents<MonoBehaviour>();
+                            if (comps == null) return false;
+                            return comps.Any(c => c != null && (c.GetType().Name.Contains("Control") || c.GetType().Name.Contains("Driver")));
+                        });
+
+                    foreach (var vehicle in vehiclesWithControl)
+                    {
+                        SceneLogger.LogVehicleComponents(vehicle);
+                    }
+                    
+                    SceneLogger.TrackNewVehicles();
+
+                    MelonLogger.Msg("=========================");
+                }
             }
         }
     }

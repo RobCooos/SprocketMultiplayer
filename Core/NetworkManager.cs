@@ -4,6 +4,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using MelonLoader;
+using SprocketMultiplayer.Core;
+using SprocketMultiplayer.Patches;
 
 namespace SprocketMultiplayer
 {
@@ -13,6 +15,7 @@ namespace SprocketMultiplayer
         private NetworkStream stream;
         private bool isHost; //for this code
         private const int BufferSize = 1024;
+        public bool IsActiveMultiplayer => IsHost || IsClient;
         
         public bool IsHost { get; private set; } //for getting Host in other values
         public bool IsClient { get; private set; }
@@ -25,6 +28,9 @@ namespace SprocketMultiplayer
 
 
         private List<TcpClient> clients = new List<TcpClient>();
+        private Dictionary<TcpClient, DateTime> pingSentTime = new Dictionary<TcpClient, DateTime>();
+        private readonly Dictionary<TcpClient, string> clientNicknames = new Dictionary<TcpClient, string>();
+        private DateTime lastPingTime = DateTime.MinValue;
         public static NetworkManager Instance { get; private set; }
 
         public NetworkManager() {
@@ -61,11 +67,16 @@ namespace SprocketMultiplayer
                 try {
                     var newClient = await server.AcceptTcpClientAsync();
                     clients.Add(newClient);
-
+                    
+                    string nickname = MenuActions.GetSteamNickname();
+                    clientNicknames[newClient] = nickname;
+                    
+                    Lobby.OnPlayerConnected(nickname);
+                    
                     string endpoint = newClient.Client.RemoteEndPoint?.ToString() ?? "Unknown";
                     connectedClients.Add(endpoint);
-
-                    MelonLogger.Msg($"[Network] Client connected: {endpoint}");
+                    
+                    MelonLogger.Msg($"[Network] Client connected: {nickname} ({endpoint})");
                 }
                 catch (Exception ex)
                 {
@@ -158,58 +169,84 @@ namespace SprocketMultiplayer
         }
 
         private void PollHostClients() {
-            for (int i = clients.Count - 1; i >= 0; i--) {
-                var c = clients[i];
-                try {
-                    if (!c.Connected || (c.Client.Poll(0, SelectMode.SelectRead) && c.Client.Available == 0)) {
-                        MelonLogger.Msg($"Client {c.Client.RemoteEndPoint} disconnected.");
-                        clients.RemoveAt(i);
-                        c.Close();
-                        continue;
-                    }
+        // send pings every 2 seconds
+        if ((DateTime.UtcNow - lastPingTime).TotalSeconds >= 2) {
+            foreach (var c in clients)
+            {
+                if (c?.Connected != true) continue;
+                
+                SendToClient(c, "Ping!");
+                pingSentTime[c] = DateTime.UtcNow;
+            }
+            lastPingTime = DateTime.UtcNow;
+        }
 
-                    if (c.GetStream().DataAvailable) {
-                        byte[] buffer = new byte[BufferSize];
-                        int bytesRead = c.GetStream().Read(buffer, 0, buffer.Length);
-                        string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                        MelonLogger.Msg($"Received from {c.Client.RemoteEndPoint}: {message}");
+        for (int i = clients.Count - 1; i >= 0; i--)
+        {
+            var c = clients[i];
+            try
+            {
+                if (!c.Connected || (c.Client.Poll(0, SelectMode.SelectRead) && c.Client.Available == 0))
+                {
+                    MelonLogger.Msg($"Client {c.Client.RemoteEndPoint} disconnected.");
+                    clients.RemoveAt(i);
+                    c.Close();
+                    continue;
+                }
 
-                        // Respond to Ping
-                        if (message == "Ping!")
-                        {
-                            SendToClient(c, "Pong!");
-                            MelonLogger.Msg($"Sent to {c.Client.RemoteEndPoint}.");
+                if (c.GetStream().DataAvailable)
+                {
+                    byte[] buffer = new byte[BufferSize];
+                    int bytesRead = c.GetStream().Read(buffer, 0, buffer.Length);
+                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                    MelonLogger.Msg($"Received from {c.Client.RemoteEndPoint}: {message}");
+
+                    // handle pong
+                    if (message == "Pong!") {
+                        if (pingSentTime.ContainsKey(c)) {
+                            int ping = (int)((DateTime.UtcNow - pingSentTime[c]).TotalMilliseconds);
+                            if (clientNicknames.TryGetValue(c, out string nickname)) {
+                                Lobby.UpdatePlayerPing(nickname, ping);
+                                MelonLogger.Msg($"Updated ping for {nickname}: {ping} ms");
+                            }
+                            pingSentTime[c] = DateTime.UtcNow;
                         }
                     }
                 }
-                catch (Exception ex) {
-                    MelonLogger.Error($"Error with client {c.Client.RemoteEndPoint}: {ex.Message}");
-                    clients.RemoveAt(i);
-                    c.Close();
-                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error with client {c.Client.RemoteEndPoint}: {ex.Message}");
+                clients.RemoveAt(i);
+                c.Close();
             }
         }
-
+    }
+        
         private void PollClient() {
             if (stream == null || !client?.Connected == true || !stream.DataAvailable) return;
 
             try {
                 byte[] buffer = new byte[BufferSize];
                 int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                if (bytesRead == 0)
-                {
+                if (bytesRead == 0) {
                     MelonLogger.Msg("Disconnected from host.");
                     CleanupClient();
                     return;
                 }
                 string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                MelonLogger.Msg($"Received from host: {message}");
+
+                // respond to ping
+                if (message == "Ping!") {
+                    Send("Pong!");
+                }
             }
             catch (Exception ex) {
                 MelonLogger.Error($"PollEvents error: {ex.Message}\nStackTrace: {ex.StackTrace}");
                 CleanupClient();
             }
         }
+
 
         // ================= SENDING =================
         public void Send(string msg) {

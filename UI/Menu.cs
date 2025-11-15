@@ -10,16 +10,23 @@ using UnityEngine.UI;
 using Steamworks;
 using UnityEngine.Events;
 using UnityEngine.SceneManagement;
-using Il2CppSystem;                  
+using Il2CppSystem;
+using SprocketMultiplayer.Patches;
+
 namespace SprocketMultiplayer.UI {
     [HarmonyPatch(typeof(MainMenu), "SceneStart")]
     public static class Menu {
-        [HarmonyPostfix]
+        [HarmonyPostfix, HarmonyPatch(typeof(MainMenu), "SceneStart")]
         public static void Postfix() {
             MelonLogger.Msg("[Sprocket Multiplayer] Main Menu detected — waiting for UI...");
             MelonCoroutines.Start(WaitForUI());
         }
-
+        [HarmonyPostfix, HarmonyPatch(typeof(SceneManager), "Internal_SceneLoaded")]
+        public static void SceneChanged(Scene scene, LoadSceneMode mode) {
+            if (scene.name != "MainMenu")
+                uiInitialized = false;
+        }
+        
         private static IEnumerator WaitForUI() {
             yield return new WaitForSeconds(1f);
             if (uiInitialized) yield break;
@@ -63,7 +70,6 @@ namespace SprocketMultiplayer.UI {
             // ================ CASE 1: standard UnityEngine.UI.Button ================
             var button = scenarioButton.GetComponent<Button>();
             if (button != null) {
-                button.onClick.RemoveAllListeners();
 
                 // Il2Cpp-compatible listener
                 button.onClick.AddListener(
@@ -104,6 +110,7 @@ namespace SprocketMultiplayer.UI {
 
         private static bool uiInitialized;
         
+        
         //  Custom click handler
         public class HandleClicks : MonoBehaviour {
             private bool clicked = false;
@@ -118,10 +125,18 @@ namespace SprocketMultiplayer.UI {
                 img.raycastTarget = true;
 
                 // wipe any old EventTriggers (prevents original click)
-                foreach (var et in GetComponentsInChildren<EventTrigger>(true)) {
+                foreach (var et in GetComponents<EventTrigger>()) {
                     et.triggers.Clear();
-                    MelonLogger.Msg($"Cleared EventTrigger on {et.gameObject.name}");
+                    
                 }
+                foreach (var mb in GetComponents<MonoBehaviour>()) {
+                    var handler = mb.TryCast<IPointerClickHandler>();
+                    if (handler != null && mb != this) {
+                        MelonLogger.Msg($"Destroying original IPointerClickHandler: {mb.GetType().FullName}");
+                        Destroy(mb);
+                    }
+                }
+
 
                 // wipe any other IPointerClickHandler implementations
                 foreach (var mb in GetComponentsInChildren<MonoBehaviour>(true)) {
@@ -140,7 +155,7 @@ namespace SprocketMultiplayer.UI {
                 );
 
                 trigger.triggers.Add(entry);
-                MelonLogger.Msg("EventTrigger set up for PointerClick (Il2Cpp).");
+                MelonLogger.Msg("EventTrigger set up for PointerClick.");
             }
 
             private void OnClicked() {
@@ -149,6 +164,7 @@ namespace SprocketMultiplayer.UI {
                 MelonLogger.Msg("Multiplayer button clicked – launching lobby.");
                 MenuActions.OnMultiplayerClick();
             }
+            
         }
     }
 }
@@ -185,8 +201,13 @@ namespace SprocketMultiplayer.UI {
         MelonLogger.Msg("Launching Multiplayer Lobby...");
 
         try {
-            // Load the CustomBattleCreation scene
-            SceneManager.LoadScene("CustomBattleCreation");
+            // Find main menu root (or cache it somewhere)
+            GameObject mainMenuGO = GameObject.Find("Menu Panel");
+            if (mainMenuGO == null)
+                MelonLogger.Warning("Main menu not found, passing null to Lobby.");
+
+            // Pass the main menu to hide it
+            Lobby.Instantiate(mainMenuGO);
             MelonLogger.Msg("Loading...");
         }
         catch (System.Exception ex) {

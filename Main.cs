@@ -4,6 +4,8 @@ using UnityEngine;
 using System.Collections;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Injection;
+using SprocketMultiplayer.Core;
+using SprocketMultiplayer.Patches;
 using SprocketMultiplayer.UI;
 
 namespace SprocketMultiplayer{
