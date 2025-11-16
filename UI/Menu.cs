@@ -11,7 +11,9 @@ using Steamworks;
 using UnityEngine.Events;
 using UnityEngine.SceneManagement;
 using Il2CppSystem;
+using SprocketMultiplayer;
 using SprocketMultiplayer.Patches;
+using Exception = System.Exception;
 
 namespace SprocketMultiplayer.UI {
     [HarmonyPatch(typeof(MainMenu), "SceneStart")]
@@ -200,17 +202,17 @@ namespace SprocketMultiplayer.UI {
     private static void LaunchLobby() {
         MelonLogger.Msg("Launching Multiplayer Lobby...");
 
-        try {
-            // Find main menu root (or cache it somewhere)
-            GameObject mainMenuGO = GameObject.Find("Menu Panel");
-            if (mainMenuGO == null)
-                MelonLogger.Warning("Main menu not found, passing null to Lobby.");
+        if (NetworkManager.Instance.IsClient) {
+            MelonLogger.Msg("Client detected — waiting for host lobby state.");
+            return;
+        }
 
-            // Pass the main menu to hide it
+        try {
+            GameObject mainMenuGO = GameObject.Find("Menu Panel");
             Lobby.Instantiate(mainMenuGO);
             MelonLogger.Msg("Loading...");
         }
-        catch (System.Exception ex) {
+        catch (Exception ex) {
             MelonLogger.Error($"Failed to load in: {ex}");
         }
     }

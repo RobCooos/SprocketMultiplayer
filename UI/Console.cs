@@ -234,10 +234,9 @@ namespace SprocketMultiplayer.UI
                     break;
 
                 case "info":
-                    AddLog("Currently running Sprocket Multiplayer v0.7.");
+                    AddLog("Currently running Sprocket Multiplayer v0.8.");
                     AddLog("Created with love by RobCos!");
                     AddLog("Don't be afraid to DM me in Discord if you find a bug.");
-                    AddLog("Made with love from Kazakhstan!");
                     break;
                 
                 case "clear":

@@ -7,6 +7,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Events;
 using Il2CppSystem;
+using UnityEngine.SceneManagement;
 
 namespace SprocketMultiplayer.Patches {
     public static class Lobby {
@@ -24,11 +25,11 @@ namespace SprocketMultiplayer.Patches {
         public static void Instantiate(GameObject mainMenuGO) {
             if (!NetworkManager.Instance.IsHost && !NetworkManager.Instance.IsClient) {
                 MelonLogger.Msg("Cannot create or join lobby: Not connected.");
-                mainMenu.SetActive(true);
+                SceneManager.LoadScene("Main Menu");
+                if (mainMenu != null) mainMenu.SetActive(true);
                 return;
             }
 
-            
             if (Panel != null) {
                 MelonLogger.Msg("Lobby already instantiated.");
                 return;
@@ -38,8 +39,9 @@ namespace SprocketMultiplayer.Patches {
             if (mainMenu != null)
                 mainMenu.SetActive(false); // hide main menu
 
+            // Try to disable scenario select if present
             GameObject scenarioRoot = GameObject.Find("ScenarioSelectScreen");
-            if (scenarioRoot) scenarioRoot.SetActive(false); // try and forcefully get rid of scenario selection
+            if (scenarioRoot) scenarioRoot.SetActive(false);
 
             // Create Canvas
             CanvasGO = new GameObject("LobbyCanvas");
@@ -49,27 +51,33 @@ namespace SprocketMultiplayer.Patches {
             CanvasGO.AddComponent<GraphicRaycaster>();
             CanvasGO.transform.SetAsLastSibling();
             AddFooterText(CanvasGO);
-            
-            // Inject the UI
+
+            // Inject UI panels
             Inject(CanvasGO);
 
-            // Fill host slot automatically
-            string hostNick = "Host";
+            // Set header text (host or local nickname)
+            string nickname = "Host";
             try {
-                // Menu.GetSteamNickname() exists in Menu.cs
-                hostNick = MenuActions.GetSteamNickname();
-            }
-            catch {
-                MelonLogger.Warning("Could not fetch Steam nickname; using fallback 'Host'.");
+                nickname = MenuActions.GetSteamNickname();
+            } 
+            catch { 
+                MelonLogger.Warning("Could not fetch Steam nickname; using fallback."); 
             }
 
-            // Set header to "<nickname>'s Lobby"
             if (headerTMP != null)
-                headerTMP.text = $"{hostNick}'s Lobby";
+                headerTMP.text = $"{nickname}'s Lobby";
 
-            // Ensure slot 0 is the host
-            TryAddPlayer(hostNick);
+            // Host: auto-add self to slot 0
+            if (NetworkManager.Instance.IsHost) {
+                TryAddPlayer(nickname);
+            } 
+            else 
+            {
+                // Client: wait for server lobby state
+                MelonLogger.Msg("Client created lobby UI; waiting for server lobby state.");
+            }
         }
+
 
         private static void Inject(GameObject canvasGO)
         {
@@ -275,7 +283,7 @@ namespace SprocketMultiplayer.Patches {
             for (int i = 0; i < PlayerSlots.Count; i++) {
                 var text = PlayerSlots[i].text;
                 if (text.Contains($": {nickname}")) {
-                    PlayerSlots[i].text = $"{nickname}, {ping} ms";
+                    PlayerSlots[i].text = $"Player{i+1}: {nickname}, {ping} ms";
                     break;
                 }
             }
@@ -327,6 +335,23 @@ namespace SprocketMultiplayer.Patches {
             textRect.anchorMax = new Vector2(1, 1);
             textRect.offsetMin = Vector2.zero;
             textRect.offsetMax = Vector2.zero;
+        }
+        
+        /// <summary>
+        /// Replace current slot contents with provided list of nicknames.
+        /// The list should represent slots in order; use null or empty for empty slots.
+        /// </summary>
+        public static void ApplyLobbyState(List<string> nicknames) {
+            if (PlayerSlots == null || PlayerSlots.Count == 0) return;
+            for (int i = 0; i < PlayerSlots.Count; i++) {
+                string text;
+                if (i < nicknames.Count && !string.IsNullOrEmpty(nicknames[i]))
+                    text = $"Player{i + 1}: {nicknames[i]}";
+                else
+                    text = $"Player{i + 1}: {EMPTY}";
+
+                PlayerSlots[i].text = text;
+            }
         }
         
     }
