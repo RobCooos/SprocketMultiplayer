@@ -8,6 +8,7 @@ using SprocketMultiplayer.Core;
 using SprocketMultiplayer.Patches;
 using UnityEngine;
 
+
 namespace SprocketMultiplayer
 {
     public class NetworkManager {
@@ -33,6 +34,8 @@ namespace SprocketMultiplayer
         private List<TcpClient> clients = new List<TcpClient>();
         private Dictionary<TcpClient, DateTime> pingSentTime = new Dictionary<TcpClient, DateTime>();
         private readonly Dictionary<TcpClient, string> clientNicknames = new Dictionary<TcpClient, string>();
+        private readonly HashSet<TcpClient> clientsReadyForPing = new HashSet<TcpClient>(); // NEW
+        
         private DateTime lastPingTime = DateTime.MinValue;
         public static NetworkManager Instance { get; private set; }
 
@@ -69,88 +72,101 @@ namespace SprocketMultiplayer
             }
         }
         private async void ListenForClients() {
-            MelonLogger.Msg("[Network] Listening for incoming clients...");
+        MelonLogger.Msg("[Network] Listening for incoming clients...");
 
-            while (isHost && server != null) {
+        while (isHost && server != null) {
+            TcpClient newClient = null;
+            try {
+                newClient = await server.AcceptTcpClientAsync();
+            } catch (Exception ex) {
+                MelonLogger.Error($"[Network] Client accept failed: {ex.Message}");
+                break;
+            }
+
+            string endpoint = newClient.Client.RemoteEndPoint?.ToString() ?? "Unknown";
+            MelonLogger.Msg($"[Network] Client connected (endpoint: {endpoint}). Waiting for JOIN...");
+
+            // Read initial message (JOIN:[nickname]>) with a short timeout
+            try {
+                var ns = newClient.GetStream();
+                ns.ReadTimeout = 5000; // 5s handshake
+                byte[] buffer = new byte[BufferSize];
+                int bytesRead = await ns.ReadAsync(buffer, 0, buffer.Length);
+                if (bytesRead <= 0) throw new Exception("Handshake read returned 0 bytes.");
+
+                string initial = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
+
+                string nickname;
+                if (initial.StartsWith("JOIN:")) {
+                    nickname = initial.Substring("JOIN:".Length).Trim();
+                    if (string.IsNullOrEmpty(nickname)) nickname = "Player";
+                } else {
+                    nickname = $"Player_{endpoint}";
+                    MelonLogger.Warning($"[Network] Unexpected initial client message: {initial}. Assigned nickname {nickname}");
+                }
+
+                // registration only after successful handshake:
+                clients.Add(newClient);
+                connectedClients.Add(endpoint);
+                clientNicknames[newClient] = nickname;
+                MelonLogger.Msg($"[Network] Registered client nickname: {nickname} ({endpoint})");
+
+                // Notify lobby
                 try {
-                    var newClient = await server.AcceptTcpClientAsync();
-                    clients.Add(newClient);
-
-                    string endpoint = newClient.Client.RemoteEndPoint?.ToString() ?? "Unknown";
-                    connectedClients.Add(endpoint);
-
-                    MelonLogger.Msg($"[Network] Client connected (endpoint: {endpoint}). Waiting for JOIN...");
-
-                    // Read initial message (JOIN:<nick>) with simple synchronous read (small buffer).
-                    try {
-                        var ns = newClient.GetStream();
-                        ns.ReadTimeout = 5000; // 5s timeout for initial handshake
-                        byte[] buffer = new byte[BufferSize];
-                        int bytesRead = await ns.ReadAsync(buffer, 0, buffer.Length);
-                        string initial = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
-
-                        if (initial.StartsWith("JOIN:")) {
-                            string nickname = initial.Substring("JOIN:".Length).Trim();
-                            if (string.IsNullOrEmpty(nickname)) nickname = "Player";
-                            clientNicknames[newClient] = nickname;
-                            Lobby.OnPlayerConnected(nickname);
-                            MelonLogger.Msg($"[Network] Registered client nickname: {nickname} ({endpoint})");
-                        } else {
-                            // fallback: unknown handshake — assign generic name using endpoint
-                            string nickname = $"Player_{endpoint}";
-                            clientNicknames[newClient] = nickname;
-                            Lobby.OnPlayerConnected(nickname);
-                            MelonLogger.Warning($"[Network] Unexpected initial client message: {initial}. Assigned nickname {nickname}");
-                        }
-
-                        // After accepting and registering, broadcast new lobby state to all clients
-                        BroadcastLobbyState();
-                    }
-                    catch (Exception ex) {
-                        MelonLogger.Error($"[Network] Error during client handshake from {endpoint}: {ex.Message}");
-                        // If handshake failed, close the connection
-                        clients.Remove(newClient);
-                        try { newClient.Close(); } catch {}
-                    }
-
+                    Lobby.OnPlayerConnected(nickname);
+                } catch (Exception ex) {
+                    MelonLogger.Error($"[Network] Lobby.OnPlayerConnected threw: {ex.Message}");
                 }
-                catch (Exception ex)
-                {
-                    MelonLogger.Error($"[Network] Client accept failed: {ex.Message}");
-                    break;
-                }
+
+                // Broadcast state
+                BroadcastLobbyState();
+            }
+            catch (Exception ex) {
+                MelonLogger.Error($"[Network] Error during client handshake from {endpoint}: {ex.Message}");
+                try { newClient.Close(); } catch {}
+                // do not add the client to clients list if handshake failed
             }
         }
-        private void BroadcastLobbyState()
-        {
+        }
+
+        private void BroadcastLobbyState() {
             // Build list: host first, then clients in arbitrary order
             var names = new List<string>();
             names.Add(hostNickname);
 
             foreach (var kv in clientNicknames) {
-                // skip nulls and duplicates
                 var nick = kv.Value;
                 if (!string.IsNullOrEmpty(nick) && nick != hostNickname)
                     names.Add(nick);
             }
 
-            // Limit to MAX_PLAYERS
+            // Limit to MAX_PLAYERS (match Lobby.MAX_PLAYERS)
+            int max = 4; // keep in sync with Lobby.MAX_PLAYERS
+            if (names.Count > max) names = names.GetRange(0, max);
+
             // Compose CSV
             string csv = string.Join(",", names);
             string msg = "LOBBY_STATE:" + csv;
 
-            // Send to all clients
+            // Send to all clients (copy list to avoid modification during loop)
             foreach (var c in clients.ToArray()) {
                 try {
                     SendToClient(c, msg);
+                    clientsReadyForPing.Add(c);
                 }
                 catch (Exception ex) {
-                    MelonLogger.Warning($"Failed to send lobby state to {c.Client.RemoteEndPoint}: {ex.Message}");
+                    try {
+                        var ep = c.Client.RemoteEndPoint;
+                        MelonLogger.Warning($"Failed to send lobby state to {ep}: {ex.Message}");
+                    } catch {
+                        MelonLogger.Warning($"Failed to send lobby state to a client: {ex.Message}");
+                    }
                 }
             }
 
             MelonLogger.Msg($"[Network] Broadcasted lobby state: {csv}");
         }
+
 
         private void OnClientConnected(IAsyncResult ar) {
             try {
@@ -235,19 +251,22 @@ namespace SprocketMultiplayer
                     string csv = message.Substring("LOBBY_STATE:".Length);
                     var names = new List<string>();
                     if (!string.IsNullOrEmpty(csv)) {
-                        foreach (var s in csv.Split(',')) names.Add(s.Trim());
+                        foreach (var s in csv.Split(',')) {
+                            var t = s.Trim();
+                            if (!string.IsNullOrEmpty(t)) names.Add(t);
+                        }
                     }
 
                     // Ensure Lobby UI exists. If not — create it (pass mainMenu if available).
                     // apply state if Lobby already instantiated; otherwise log and wait.
                     if (Lobby.Panel == null) {
-                        MelonLogger.Msg("[Client] Lobby UI not present yet. Creating client lobby UI.");
-
-                        GameObject mainMenuGO = GameObject.Find("Menu Panel");
-                        Lobby.Instantiate(mainMenuGO);
+                        MelonLogger.Msg("[Client] Lobby UI not present yet. Waiting for LobbyCanvas...");
+                        MelonCoroutines.Start(Lobby.WaitForLobbyCanvasThenCreateUI(names));
+                        return; // exit this frame, ApplyLobbyState will run after UI is ready
                     }
+
                     
-                    Lobby.ApplyLobbyState(names);
+                    Lobby.HandleIncomingLobbyState(names);
                     MelonLogger.Msg("[Client] Applied lobby state from host.");
                 }
                 else {
@@ -265,7 +284,6 @@ namespace SprocketMultiplayer
                 CleanupClient();
             }
         }
-
         
 
         // ================= POLLING =================
@@ -282,7 +300,8 @@ namespace SprocketMultiplayer
             foreach (var c in clients)
             {
                 if (c?.Connected != true) continue;
-                
+                if (!clientsReadyForPing.Contains(c)) continue;
+
                 SendToClient(c, "Ping!");
                 pingSentTime[c] = DateTime.UtcNow;
             }
@@ -297,8 +316,7 @@ namespace SprocketMultiplayer
                 if (!c.Connected || (c.Client.Poll(0, SelectMode.SelectRead) && c.Client.Available == 0))
                 {
                     MelonLogger.Msg($"Client {c.Client.RemoteEndPoint} disconnected.");
-                    clients.RemoveAt(i);
-                    c.Close();
+                    RemoveClient(c);
                     
                     // remove from maps
                     if (clientNicknames.ContainsKey(c)) clientNicknames.Remove(c);
@@ -330,11 +348,11 @@ namespace SprocketMultiplayer
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error with client {c.Client.RemoteEndPoint}: {ex.Message}");
-                clients.RemoveAt(i);
+                RemoveClient(c);
                 c.Close();
             }
         }
-    }
+        }
         
         private void PollClient() {
             if (stream == null || !client?.Connected == true || !stream.DataAvailable) return;
@@ -388,8 +406,12 @@ namespace SprocketMultiplayer
             try {
                 stream?.Close();
                 client?.Close();
-                foreach (var c in clients) c.Close();
-                if (isHost) server?.Stop();
+                if (isHost) {
+                    server?.Stop();
+                }
+                foreach (var c in clients) {
+                    c.Close();
+                }
 
                 stream = null;
                 client = null;
@@ -416,7 +438,14 @@ namespace SprocketMultiplayer
                 MelonLogger.Error($"Cleanup error: {ex.Message}\nStackTrace: {ex.StackTrace}");
             }
         }
+        
+        private void RemoveClient(TcpClient c) {
+            clients.Remove(c);
+            connectedClients.Remove(c.Client.RemoteEndPoint.ToString());
+            clientNicknames.Remove(c);
+            clientsReadyForPing.Remove(c);
+            pingSentTime.Remove(c);
+        }
+
     }
-    
-    
 }
