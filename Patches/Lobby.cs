@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using Il2CppSystem;
 using Il2CppInterop.Runtime;
 using Il2CppTMPro;
 using MelonLoader;
@@ -20,9 +21,13 @@ namespace SprocketMultiplayer.Patches {
         
         private static TextMeshProUGUI headerTMP;
         public static List<TextMeshProUGUI> PlayerSlots = new List<TextMeshProUGUI>();
+        public static TMP_Dropdown mapDropdown;
+        private static TextMeshProUGUI mapTextTMP;
+        private static TextMeshProUGUI mapText;
         
         private const int MAX_PLAYERS = 4;
         private const string EMPTY = "Empty Slot";
+        private static string currentMap = "Railway";
         
         private static string hostLobbyName = null;
         public static bool LobbyUIReady = false;
@@ -99,20 +104,33 @@ namespace SprocketMultiplayer.Patches {
             LobbyUICreated = false;
         }
         
-        public static void Instantiate(GameObject mainMenuGO) {
-            if (Panel != null || LobbyUIReady) {
+        
+        private static void SendMapToClients(string mapName) {
+            MelonLogger.Msg($"[Lobby] Broadcasting map: {mapName}");
+            if (NetworkManager.Instance.IsHost) {
+                NetworkManager.Instance.Send("MAP:" + mapName);
+            }
+        }
+        
+        
+        public static void Instantiate(GameObject mainMenuGO)
+        {
+            if (Panel != null || LobbyUIReady)
+            {
                 MelonLogger.Msg("Instantiate: already instantiated -> abort");
                 return;
             }
 
-            if (!NetworkManager.Instance.IsHost && !NetworkManager.Instance.IsClient) {
+            if (!NetworkManager.Instance.IsHost && !NetworkManager.Instance.IsClient)
+            {
                 MelonLogger.Msg("Cannot create or join lobby: Not connected.");
                 SceneManager.LoadScene("Main Menu");
                 if (mainMenu != null) mainMenu.SetActive(true);
                 return;
             }
 
-            if (mainMenuGO == null) {
+            if (mainMenuGO == null)
+            {
                 MelonLogger.Warning("Menu Panel not found yet, delaying lobby creation...");
                 MelonCoroutines.Start(WaitForMenuAndRetry());
                 return;
@@ -124,31 +142,53 @@ namespace SprocketMultiplayer.Patches {
 
             // create UI elements
             CreateLobbyUI();
-
+            
             // Set header
             string localNickname = "Player";
-            try {
+            try
+            {
                 localNickname = MenuActions.GetSteamNickname();
             }
-            catch { 
+            catch
+            {
                 MelonLogger.Warning("Could not fetch local Steam nickname for header.");
             }
 
-            if (NetworkManager.Instance.IsHost) {
+            if (NetworkManager.Instance.IsHost)
+            {
                 headerTMP.text = $"{localNickname}'s Lobby";
                 TryAddPlayer(localNickname); // host auto-adds self
-            }
-            else {
-                MelonLogger.Msg("Client created lobby UI; waiting for server lobby state.");
-            }
-            
-            if (pendingLobbyState != null) {
-                ApplyLobbyState(pendingLobbyState);
-                pendingLobbyState = null;
+                // Initial map broadcast
+                if (mapDropdown != null && mapDropdown.options.Count > 0)
+                {
+                    TMP_Dropdown.OptionData firstOption = null;
+                    int firstIndex = 0;
+
+                    foreach (var opt in mapDropdown.options)
+                    {
+                        firstOption = opt;
+                        break; // first element
+                    }
+
+                    if (firstOption != null)
+                    {
+                        SendMapToClients(firstOption.text);
+                    }
+                    else
+                    {
+                        MelonLogger.Warning("[Lobby] No map option found to send to clients.");
+                    }
+                }
+
+
+                if (pendingLobbyState != null)
+                {
+                    ApplyLobbyState(pendingLobbyState);
+                    pendingLobbyState = null;
+                }
             }
         }
-        
-        
+
         // ================= UI =================
         private static void CreateLobbyUI() {
             try {
@@ -206,7 +246,7 @@ namespace SprocketMultiplayer.Patches {
 
             // RIGHT PANEL: Map / Settings
             var rightPanel = CreatePanel("RightPanel", Panel.transform, new Vector2(0.25f, 1f), new Vector2(0.75f, 0));
-            AddPlaceholderText(rightPanel.transform, "Map / Settings Placeholder");
+            SetupRightPanel(rightPanel.transform);
         }
 
         private static GameObject CreatePanel(string name, Transform parent, Vector2 widthPercent, Vector2 anchorMin) {
@@ -282,7 +322,94 @@ namespace SprocketMultiplayer.Patches {
             }
 
         }
+
+        private static void SetupRightPanel(Transform parent)
+        {
+            // ===== Title =====
+            var titleGO = new GameObject("MapTitle");
+            titleGO.transform.SetParent(parent, false);
+
+            var titleTMP = titleGO.AddComponent<TextMeshProUGUI>();
+            titleTMP.text = "Selected Map";
+            titleTMP.fontSize = 26;
+            titleTMP.alignment = TextAlignmentOptions.Center;
+            titleTMP.color = Color.white;
+
+            var titleRect = titleTMP.rectTransform;
+            titleRect.anchorMin = new Vector2(0, 1);
+            titleRect.anchorMax = new Vector2(1, 1);
+            titleRect.pivot = new Vector2(0.5f, 1);
+            titleRect.sizeDelta = new Vector2(0, 40);
+            titleRect.anchoredPosition = new Vector2(0, -10);
+
+
+            // ===== Map Name (hardcoded Railway) =====
+            var mapGO = new GameObject("SelectedMapText");
+            mapGO.transform.SetParent(parent, false);
+
+            mapTextTMP = mapGO.AddComponent<TextMeshProUGUI>();
+            mapTextTMP.text = "Railway";
+            mapTextTMP.fontSize = 22;
+            mapTextTMP.alignment = TextAlignmentOptions.Center;
+            mapTextTMP.color = Color.white;
+
+            var mapRect = mapTextTMP.rectTransform;
+            mapRect.anchorMin = new Vector2(0, 1);
+            mapRect.anchorMax = new Vector2(1, 1);
+            mapRect.pivot = new Vector2(0.5f, 1);
+            mapRect.sizeDelta = new Vector2(0, 30);
+            mapRect.anchoredPosition = new Vector2(0, -60);
+
+
+            // ===== Start Button (host only) =====
+            if (NetworkManager.Instance.IsHost)
+            {
+                var btnGO = new GameObject("StartButton");
+                btnGO.transform.SetParent(parent, false);
+
+                var btn = btnGO.AddComponent<Button>();
+                var img = btnGO.AddComponent<Image>();
+                img.color = new Color(0.3f, 0.3f, 0.3f, 0.9f);
+
+                var btnRect = btnGO.GetComponent<RectTransform>();
+                btnRect.anchorMin = new Vector2(0.2f, 0);
+                btnRect.anchorMax = new Vector2(0.8f, 0);
+                btnRect.pivot = new Vector2(0.5f, 0);
+                btnRect.sizeDelta = new Vector2(0, 40);
+                btnRect.anchoredPosition = new Vector2(0, 20);
+
+                // button label
+                var labelGO = new GameObject("StartButtonLabel");
+                labelGO.transform.SetParent(btnGO.transform, false);
+
+                var label = labelGO.AddComponent<TextMeshProUGUI>();
+                label.text = "Start";
+                label.fontSize = 22;
+                label.color = Color.white;
+                label.alignment = TextAlignmentOptions.Center;
+
+                var labelRect = label.rectTransform;
+                labelRect.anchorMin = Vector2.zero;
+                labelRect.anchorMax = Vector2.one;
+                labelRect.offsetMin = Vector2.zero;
+                labelRect.offsetMax = Vector2.zero;
+
+                var action = (UnityAction) delegate {
+                    OnStartButtonPressed();
+                };
+                btn.onClick.AddListener(action);
+
+            }
+        }
         
+        public static void OnStartButtonPressed()
+        {
+            MelonLogger.Msg("[Lobby] Host pressed Start — loading Railway");
+            SceneManager.LoadScene("Railway");
+            SendMapToClients("Railway");
+        }
+
+
         private static GameObject CreatePlayerSlot(string name) {
         var go = new GameObject("PlayerSlot");
         var rect = go.AddComponent<RectTransform>();
@@ -347,6 +474,7 @@ namespace SprocketMultiplayer.Patches {
         return go;
     }
         
+
         private static void AddPlaceholderText(Transform parent, string text) {
             var textGO = new GameObject("PlaceholderText");
             textGO.transform.SetParent(parent, false);
@@ -395,7 +523,7 @@ namespace SprocketMultiplayer.Patches {
             textRect.offsetMax = Vector2.zero;
         }
         
-
+        
         // ================= PLAYER MANAGEMENT =================
         public static bool TryAddPlayer(string nickname) {
             if (string.IsNullOrEmpty(nickname)) return false;
@@ -535,6 +663,5 @@ namespace SprocketMultiplayer.Patches {
                 }
             }
         }
-        
     }
 }

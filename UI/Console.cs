@@ -329,9 +329,9 @@ namespace SprocketMultiplayer.UI
                         break;
                     }
 
-                    // Nothing found — tell dev what to do
+                    // Nothing found — tell what to do
                     AddLog("NetworkManager does not expose clients or client count.");
-                    AddLog("Options: add a public 'int ClientCount' property or a public 'IEnumerable Clients' collection to NetworkManager.");
+                    AddLog("Send this to dev with full Console Log, this is most likely his mistake.");
                     break;
                 }
                 

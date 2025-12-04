@@ -166,8 +166,7 @@ namespace SprocketMultiplayer
 
             MelonLogger.Msg($"[Network] Broadcasted lobby state: {csv}");
         }
-
-
+        
         private void OnClientConnected(IAsyncResult ar) {
             try {
                 var newClient = server.EndAcceptTcpClient(ar);
@@ -235,15 +234,17 @@ namespace SprocketMultiplayer
         private async System.Threading.Tasks.Task ReceiveFromHostAsync() {
             try {
                 byte[] buffer = new byte[BufferSize];
-            while (IsClient && client?.Connected == true) {
-                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                if (bytesRead == 0) {
-                    MelonLogger.Msg("Disconnected from host.");
-                    CleanupClient();
-                    break;
-                }
+                while (IsClient && client?.Connected == true)
+                {
+                    int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                    if (bytesRead == 0)
+                    {
+                        CleanupClient();
+                        break;
+                    }
+                    
+                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
 
-                string message = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
                 MelonLogger.Msg($"[Client] Received from host: {message}");
 
                 // If server sends lobby state:
@@ -262,7 +263,7 @@ namespace SprocketMultiplayer
                     if (Lobby.Panel == null) {
                         MelonLogger.Msg("[Client] Lobby UI not present yet. Waiting for LobbyCanvas...");
                         MelonCoroutines.Start(Lobby.WaitForLobbyCanvasThenCreateUI(names));
-                        return; // exit this frame, ApplyLobbyState will run after UI is ready
+                        continue; // keep listening for next messages
                     }
 
                     
@@ -270,14 +271,26 @@ namespace SprocketMultiplayer
                     MelonLogger.Msg("[Client] Applied lobby state from host.");
                 }
                 else {
-                    // keep current behaviors: respond to ping etc
+                    // general message handling
                     MelonLogger.Msg($"[Client] Received from host: {message}");
-                    if (message == "Ping!") {
+
+                    // =============== MAP LOAD ===============
+                    if (message.StartsWith("MAP:"))
+                    {
+                        string map = message.Substring(4).Trim();
+                        MelonLogger.Msg("[Client] Host selected map: " + map + " — loading scene.");
+                        UnityEngine.SceneManagement.SceneManager.LoadScene(map);
+                        continue;
+                    }
+
+                    // =============== Ping ===============
+                    if (message == "Ping!")
+                    {
                         Send("Pong!");
+                        continue; // no it's not redundant fuck you raider
                     }
                 }
-
-            }
+                }
             }
             catch (Exception ex) {
                 MelonLogger.Error($"ReceiveFromHostAsync error: {ex.Message}");
@@ -290,8 +303,6 @@ namespace SprocketMultiplayer
         public void PollEvents() {
             if (isHost)
                 PollHostClients();
-            else
-                PollClient();
         }
 
         private void PollHostClients() {
@@ -354,29 +365,6 @@ namespace SprocketMultiplayer
         }
         }
         
-        private void PollClient() {
-            if (stream == null || !client?.Connected == true || !stream.DataAvailable) return;
-
-            try {
-                byte[] buffer = new byte[BufferSize];
-                int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                if (bytesRead == 0) {
-                    MelonLogger.Msg("Disconnected from host.");
-                    CleanupClient();
-                    return;
-                }
-                string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-
-                // respond to ping
-                if (message == "Ping!") {
-                    Send("Pong!");
-                }
-            }
-            catch (Exception ex) {
-                MelonLogger.Error($"PollEvents error: {ex.Message}\nStackTrace: {ex.StackTrace}");
-                CleanupClient();
-            }
-        }
 
 
         // ================= SENDING =================
@@ -388,7 +376,7 @@ namespace SprocketMultiplayer
                 MelonLogger.Msg($"Sent to all clients: {msg}");
             }
             else if (client?.Connected == true) {
-                byte[] data = Encoding.UTF8.GetBytes(msg);
+                byte[] data = Encoding.UTF8.GetBytes(msg + "\n");
                 stream.Write(data, 0, data.Length);
                 MelonLogger.Msg($"Sent to host: {msg}");
             }
@@ -396,7 +384,7 @@ namespace SprocketMultiplayer
 
         private void SendToClient(TcpClient c, string msg) {
             if (c?.Connected != true) return;
-            byte[] data = Encoding.UTF8.GetBytes(msg);
+            byte[] data = Encoding.UTF8.GetBytes(msg + "\n");
             c.GetStream().Write(data, 0, data.Length);
             MelonLogger.Msg($"Sent to {c.Client.RemoteEndPoint}: {msg}");
         }

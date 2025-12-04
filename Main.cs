@@ -65,6 +65,9 @@ namespace SprocketMultiplayer{
                     $"Spawn failed in scene {sceneName} (buildIndex {buildIndex}): {ex.Message}\nStackTrace: {ex.StackTrace}");
                 MelonCoroutines.Start(DelayedSpawn(0));
             }
+            
+            foreach(var go in Resources.FindObjectsOfTypeAll<GameObject>())
+                MelonLogger.Msg(go.name);
 
         }
 
@@ -83,7 +86,6 @@ namespace SprocketMultiplayer{
 
             MelonLogger.Msg("Input handler spawned successfully.");
         }
-
 
         private IEnumerator DelayedSpawn(int attempt) {
             if (attempt >= MaxRetryAttempts) {
@@ -130,8 +132,7 @@ namespace SprocketMultiplayer{
                 MelonLogger.Error($"Failed to spawn console: {ex}");
             }
         }
-
-
+        
         public override void OnApplicationQuit() {
             network?.Shutdown();
             MelonLogger.Msg("Sprocket Multiplayer shut down.");
