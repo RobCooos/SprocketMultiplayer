@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using Il2CppSystem;
 using Il2CppInterop.Runtime;
 using Il2CppTMPro;
@@ -9,6 +10,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Events;
 using Il2CppSystem;
+using SprocketMultiplayer.Core;
+using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
 using Exception = System.Exception;
 
@@ -16,8 +19,9 @@ namespace SprocketMultiplayer.Patches {
     public static class Lobby {
         public static GameObject CanvasGO;
         public static GameObject Panel;
-        private static GameObject mainMenu; // reference to main menu
+        private static GameObject mainMenu;
         private static GameObject centerPanel;
+        private static Transform tankScrollContent;
         
         private static TextMeshProUGUI headerTMP;
         public static List<TextMeshProUGUI> PlayerSlots = new List<TextMeshProUGUI>();
@@ -28,12 +32,16 @@ namespace SprocketMultiplayer.Patches {
         private const int MAX_PLAYERS = 4;
         private const string EMPTY = "Empty Slot";
         private static string currentMap = "Railway";
-        
+        public static string SelectedTank = null;
         private static string hostLobbyName = null;
+        
         public static bool LobbyUIReady = false;
         
         private static List<string> pendingLobbyState = null;
         private static bool LobbyUICreated = false;
+        private static Dictionary<GameObject, string> tankButtonMap = new Dictionary<GameObject, string>();
+        private static Dictionary<GameObject, GameObject> tankLabelMap = new Dictionary<GameObject, GameObject>();
+        
         private static bool IsReady() {
             return TMP_Settings.instance != null &&
                    TMP_Settings.defaultFontAsset != null;
@@ -104,14 +112,12 @@ namespace SprocketMultiplayer.Patches {
             LobbyUICreated = false;
         }
         
-        
         private static void SendMapToClients(string mapName) {
             MelonLogger.Msg($"[Lobby] Broadcasting map: {mapName}");
             if (NetworkManager.Instance.IsHost) {
                 NetworkManager.Instance.Send("MAP:" + mapName);
             }
         }
-        
         
         public static void Instantiate(GameObject mainMenuGO)
         {
@@ -135,8 +141,7 @@ namespace SprocketMultiplayer.Patches {
                 MelonCoroutines.Start(WaitForMenuAndRetry());
                 return;
             }
-
-            // Save reference to the actual menu object we got
+            
             mainMenu = mainMenuGO;
             if (mainMenu != null) mainMenu.SetActive(false);
 
@@ -237,15 +242,21 @@ namespace SprocketMultiplayer.Patches {
             bg.color = new Color(0, 0, 0, 0.7f);
 
             // LEFT PANEL: Tank Selection
-            var leftPanel = CreatePanel("LeftPanel", Panel.transform, new Vector2(0.25f, 1f), new Vector2(0, 0));
-            AddPlaceholderText(leftPanel.transform, "Tank Selection Placeholder");
+            var leftPanel = CreatePanel("LeftPanel", Panel.transform, new Vector2(0.35f, 1f), new Vector2(0.00f, 0));
+            try {
+                SetupLeftPanel(leftPanel.transform);
+            }
+            catch (Exception ex) {
+                MelonLogger.Error($"[Lobby] SetupLeftPanel CRASH: {ex}");
+                AddPlaceholderText(leftPanel.transform, "Unable to create Tank List for some reason.\nCheck logs for ref.");
+            }
 
             // CENTER PANEL: Connected Players
-            centerPanel = CreatePanel("CenterPanel", Panel.transform, new Vector2(0.5f, 1f), new Vector2(0.25f, 0));
+            centerPanel = CreatePanel("CenterPanel", Panel.transform, new Vector2(0.45f, 1f), new Vector2(0.35f, 0));
             SetupCenterPanel(centerPanel.transform);
 
             // RIGHT PANEL: Map / Settings
-            var rightPanel = CreatePanel("RightPanel", Panel.transform, new Vector2(0.25f, 1f), new Vector2(0.75f, 0));
+            var rightPanel = CreatePanel("RightPanel", Panel.transform, new Vector2(0.20f, 1f), new Vector2(0.80f, 0));
             SetupRightPanel(rightPanel.transform);
         }
 
@@ -266,6 +277,216 @@ namespace SprocketMultiplayer.Patches {
 
             return go;
         }
+        
+        private static void CreateTankEntry(TankInfo tank, Transform parent) {
+        if (tank == null) {
+            MelonLogger.Warning("[Lobby] Cannot create entry for null tank");
+            return;
+        }
+
+        try {
+            MelonLogger.Msg($"[Lobby] Creating entry for tank: {tank.Name}");
+
+            // ROOT
+            GameObject go = new GameObject(tank.Name);
+            go.transform.SetParent(parent, false);
+
+            RectTransform rect = go.AddComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(120, 120);
+
+            // Background
+            Image bgImg = go.AddComponent<Image>();
+            bgImg.color = new Color(0.15f, 0.15f, 0.15f, 0.9f);
+
+            // Tank Image
+            if (!string.IsNullOrEmpty(tank.ImagePath) && File.Exists(tank.ImagePath)) {
+                try {
+                    byte[] bytes = File.ReadAllBytes(tank.ImagePath);
+                    Texture2D tex = new Texture2D(2, 2);
+                    tex.LoadImage(bytes);
+
+                    GameObject tankImgGO = new GameObject("TankImage");
+                    tankImgGO.transform.SetParent(go.transform, false);
+
+                    RectTransform imgRect = tankImgGO.AddComponent<RectTransform>();
+                    imgRect.anchorMin = Vector2.zero;
+                    imgRect.anchorMax = Vector2.one;
+                    imgRect.offsetMin = new Vector2(5, 5);
+                    imgRect.offsetMax = new Vector2(-5, -5);
+
+                    Image tankImg = tankImgGO.AddComponent<Image>();
+                    tankImg.sprite = Sprite.Create(
+                        tex,
+                        new Rect(0, 0, tex.width, tex.height),
+                        new Vector2(0.5f, 0.5f)
+                    );
+                    tankImg.preserveAspect = true;
+                    tankImg.color = Color.white;
+                    tankImg.raycastTarget = false;
+
+                } catch (Exception ex) {
+                    MelonLogger.Warning($"[Lobby] Failed to load tank image for {tank.Name}: {ex.Message}");
+                }
+            }
+
+            // Store mapping tank → button
+            tankButtonMap[go] = tank.Name;
+
+            // Button
+            Button btn = go.AddComponent<Button>();
+            btn.targetGraphic = bgImg;
+
+            btn.transition = Selectable.Transition.ColorTint;
+            var colors = btn.colors;
+            colors.normalColor = new Color(0.15f, 0.15f, 0.15f, 0.9f);
+            colors.highlightedColor = new Color(0.25f, 0.25f, 0.25f, 1f);
+            colors.pressedColor = new Color(0.35f, 0.35f, 0.35f, 1f);
+            btn.colors = colors;
+
+            // CLick → OnTankClicked(go)
+            btn.onClick.AddListener((UnityAction)(() => OnTankClicked(go)));
+
+            MelonLogger.Msg($"[Lobby] {tank.Name}: Entry created successfully!");
+
+        } catch (Exception ex) {
+            MelonLogger.Error($"[Lobby] Exception in CreateTankEntry for {tank?.Name}: {ex.Message}\n{ex.StackTrace}");
+            throw;
+        }
+    }
+
+        
+        private static void OnTankClicked(GameObject tankButton) {
+            if (tankButtonMap.ContainsKey(tankButton)) {
+                string tankName = tankButtonMap[tankButton];
+                MelonLogger.Msg($"[Lobby] Tank selected: {tankName}");
+                // TODO: Store selected tank for the player
+                // TODO: Update UI to show selection
+            }
+        }
+        
+
+        private class TankEntryHandler : MonoBehaviour {
+            public string tankName;
+            public GameObject label;
+
+            public void OnClick() {
+                SelectedTank = tankName;
+                MelonLogger.Msg("[Lobby] Player selected tank: " + tankName);
+            }
+
+            public void OnPointerEnter(BaseEventData data) {
+                if (label != null)
+                    label.SetActive(true);
+            }
+
+            public void OnPointerExit(BaseEventData data) {
+                if (label != null)
+                    label.SetActive(false);
+            }
+        }
+
+        private static void SetupLeftPanel(Transform parent) {
+        // DEBUG START
+        MelonLogger.Msg($"[UI DEBUG] parent = {parent}");
+        MelonLogger.Msg($"[UI DEBUG] PlayerSlots exists? {PlayerSlots != null}");
+        MelonLogger.Msg($"[UI DEBUG] PlayerSlots count = {PlayerSlots?.Count}");
+        // DEBUG END
+        
+        // ===== Check faction =====
+        string faction = "Unknown";
+        try {
+            faction = Main.GetPlayerFaction();
+        } catch {
+            MelonLogger.Warning("[Lobby] Could not fetch player faction, using placeholder.");
+        }
+        
+        if (!Main.VehicleManager.CheckFaction(faction)) {
+            AddPlaceholderText(parent, "Restricted faction selected.\nSelect AllowedVehicles.");
+            return;
+        }
+        
+        // ===== Scroll View =====
+        var scrollGO = new GameObject("TankScrollView");
+        scrollGO.transform.SetParent(parent, false);
+        
+        var scrollRect = scrollGO.AddComponent<RectTransform>();
+        scrollRect.anchorMin = new Vector2(0, 0);
+        scrollRect.anchorMax = new Vector2(1, 1);
+        scrollRect.offsetMin = Vector2.zero;
+        scrollRect.offsetMax = Vector2.zero;
+        
+        var scroll = scrollGO.AddComponent<ScrollRect>();
+        
+        // Viewport
+        var viewGO = new GameObject("Viewport");
+        viewGO.transform.SetParent(scrollGO.transform, false);
+        var viewMask = viewGO.AddComponent<Mask>();
+        viewMask.showMaskGraphic = false;
+        var viewImg = viewGO.AddComponent<Image>();
+        viewImg.color = new Color(0, 0, 0, 0.3f);
+        var viewRect = viewGO.GetComponent<RectTransform>();
+        viewRect.anchorMin = Vector2.zero;
+        viewRect.anchorMax = Vector2.one;
+        viewRect.offsetMin = Vector2.zero;
+        viewRect.offsetMax = Vector2.zero;
+        
+        // Content
+        var contentGO = new GameObject("Content");
+        contentGO.transform.SetParent(viewGO.transform, false);
+        tankScrollContent = contentGO.transform;
+        var contentRect = contentGO.AddComponent<RectTransform>();
+        contentRect.anchorMin = new Vector2(0, 1);
+        contentRect.anchorMax = new Vector2(1, 1);
+        contentRect.pivot = new Vector2(0.5f, 1);
+        contentRect.anchoredPosition = Vector2.zero;
+        contentRect.sizeDelta = new Vector2(0, 0);
+        
+        var gridLayout = contentGO.AddComponent<GridLayoutGroup>();
+        gridLayout.cellSize = new Vector2(120, 120); // Size of each tank card
+        gridLayout.spacing = new Vector2(10, 10); // Gap between cards
+        gridLayout.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+        gridLayout.constraintCount = 2; // 2 columns
+        gridLayout.childAlignment = TextAnchor.UpperCenter;
+        gridLayout.startCorner = GridLayoutGroup.Corner.UpperLeft;
+        gridLayout.startAxis = GridLayoutGroup.Axis.Horizontal;
+        
+        var fitter = contentGO.AddComponent<ContentSizeFitter>();
+        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        
+        scroll.content = contentRect;
+        scroll.viewport = viewRect;
+        scroll.horizontal = false;
+        scroll.vertical = true;
+        
+        // ===== Load tanks =====
+        MelonLogger.Msg("[Lobby] About to call TankDatabase.LoadTanks()");
+        
+        string tanksPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "My Games", "Sprocket", "Factions", "AllowedVehicles", "Blueprints", "Vehicles"
+        );
+        
+        MelonLogger.Msg($"[Lobby] Tank path: {tanksPath}");
+        
+        var tanks = TankDatabase.LoadTanks();
+        MelonLogger.Msg($"[Lobby] LoadTanks returned: {(tanks == null ? "NULL" : $"List with {tanks.Count} items")}");
+        
+        if (tanks == null || tanks.Count == 0) {
+            AddPlaceholderText(parent, "No available tanks found.");
+            return;
+        }
+        
+        MelonLogger.Msg("[Lobby] Starting tank entry creation loop");
+        foreach (var tank in tanks) {
+            try {
+                MelonLogger.Msg($"[Lobby] Creating entry for tank: {tank?.Name ?? "NULL"}");
+                CreateTankEntry(tank, contentGO.transform);
+            } catch (Exception ex) {
+                MelonLogger.Error($"[Lobby] Failed to create tank entry: {ex}");
+            }
+        }
+        MelonLogger.Msg("[Lobby] Tank entry creation complete");
+    }
 
         private static void SetupCenterPanel(Transform parent) {
             // Header
@@ -323,8 +544,7 @@ namespace SprocketMultiplayer.Patches {
 
         }
 
-        private static void SetupRightPanel(Transform parent)
-        {
+        private static void SetupRightPanel(Transform parent) {
             // ===== Title =====
             var titleGO = new GameObject("MapTitle");
             titleGO.transform.SetParent(parent, false);
@@ -450,8 +670,6 @@ namespace SprocketMultiplayer.Patches {
             fallback.fontSize = 20;
             fallback.alignment = TextAnchor.MiddleCenter;
             fallback.color = Color.white;
-            // If TMP becomes ready later and you want to swap, implement a swap routine (optional).
-            // Keep PlayerSlots typed as TMP: we'll keep null entries and guard usage elsewhere.
         } else {
             tmp.text = name; // initial: "Player1: Empty Slot"
             tmp.fontSize = 20;

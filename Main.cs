@@ -10,6 +10,7 @@ using SprocketMultiplayer.UI;
 
 namespace SprocketMultiplayer{
     public class Main : MelonMod {
+        public static string GetPlayerFaction() => "AllowedVehicles";
         private static NetworkManager network;
         private static bool handlerSpawned = false;
         private const int MaxRetryAttempts = 3;
@@ -18,28 +19,40 @@ namespace SprocketMultiplayer{
         private static bool photomodeWarning = false;
         
         
-        
         public override void OnInitializeMelon() {
-            Il2CppInterop.Runtime.Injection.ClassInjector.RegisterTypeInIl2Cpp<Menu.HandleClicks>();
+            ClassInjector.RegisterTypeInIl2Cpp<Menu.HandleClicks>();
             try {
                 network = new NetworkManager() ??
                           throw new System.Exception("NetworkManager constructor returned null");
                 ClassInjector.RegisterTypeInIl2Cpp<InputHandler>();
-                ClassInjector.RegisterTypeInIl2Cpp<SprocketMultiplayer.UI.Console>();
+                ClassInjector.RegisterTypeInIl2Cpp<UI.Console>();
                 
                 MelonLogger.Msg("Sprocket Multiplayer initialized successfully.");
             }
-            catch (System.Exception ex) {
+            catch (Exception ex) {
                 MelonLogger.Error($"Initialization failed: {ex.Message}\nStackTrace: {ex.StackTrace}");
                 network = null; // explicit null so OnUpdate knows not to use it
             }
-            new HarmonyLib.Harmony("SprocketMultiplayer").PatchAll();
+            try {
+                new HarmonyLib.Harmony("SprocketMultiplayer").PatchAll();
+            }
+            catch (Exception ex) {
+                MelonLogger.Warning($"Some Harmony patches failed: {ex.Message}");
+                // Continue execution anyway
+            }
+            
             if (!photomodeWarning) {
                 ShowPhotomodeWarning();
                 photomodeWarning = true;
             }
-
+            
+            // --- VehicleManager usage test ---
+            MelonLogger.Msg("[VehicleManager] Game started. Testing VehicleManager...");
+            string currentFaction = GetPlayerFaction();
+            bool canPickVehicle = VehicleManager.CheckFaction(currentFaction);
+            MelonLogger.Msg($"[VehicleManager] VehicleManager.CheckFaction returned {canPickVehicle}");
         }
+
 
         private static void ShowPhotomodeWarning() {
             MelonLogger.Warning(
@@ -52,7 +65,21 @@ namespace SprocketMultiplayer{
                 "========================================================"
             );
         }
+        public static class VehicleManager {
+            private const string AllowedFaction = "AllowedVehicles";
 
+            public static bool CheckFaction(string playerFaction) {
+                MelonLogger.Msg($"[VehicleManager] CheckFaction called with faction: {playerFaction}");
+                if (playerFaction == AllowedFaction) {
+                    MelonLogger.Msg("[VehicleManager] Faction allowed.");
+                    return true;
+                } else {
+                    MelonLogger.Msg("[VehicleManager] Your current faction is not allowed. Select AllowedVehicles faction to pick a tank.");
+                    return false;
+                }
+            }
+        }
+        
         public override void OnSceneWasLoaded(int buildIndex, string sceneName) {
             if (handlerSpawned) return;
             handlerSpawned = true;
