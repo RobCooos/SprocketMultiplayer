@@ -107,10 +107,6 @@ namespace SprocketMultiplayer{
             var comp = go.AddComponent(il2cppType)?.Cast<InputHandler>();
             if (comp == null)
                 throw new System.Exception("Failed to instantiate InputHandler component.");
-
-            // Assign network via public field instead of Init()
-            comp.network = network;
-
             MelonLogger.Msg("Input handler spawned successfully.");
         }
 

@@ -1,74 +1,80 @@
-using System.Linq;
-using Il2CppSprocket.Gameplay.VehicleControl;
-using Il2CppSprocket.PlayerControl;
 using UnityEngine;
-using MelonLoader;
 using UnityEngine.InputSystem;
+using MelonLoader;
+using SprocketMultiplayer.Core;
 using SprocketMultiplayer.UI;
 
-namespace SprocketMultiplayer.Core {
-    public class InputHandler : MonoBehaviour {
-        public NetworkManager network;
-        private Console consoleInstance;
+namespace SprocketMultiplayer.Core
+{
+    /// <summary>
+    /// Handles debug input for testing spawning
+    /// F7 - Initialize BlueprintSpawner
+    /// F8 - Spawn tank next to player
+    /// </summary>
+    public class InputHandler : MonoBehaviour
+    {
+        private void Update()
+        {
+            if (Keyboard.current == null) return;
 
-        private void Start() {
-            consoleInstance = FindObjectOfType<Console>();
+            // Ignore input if console is open
+            var console = Console.Instance;
+            if (console != null && Console.IsOpen && console.IsFocused()) return;
+
+            // F7: Initialize blueprint spawner
+            if (Keyboard.current.f7Key.wasPressedThisFrame)
+            {
+                MelonLogger.Msg("=== F7: INITIALIZING BLUEPRINT SPAWNER ===");
+                BlueprintSpawner.Initialize();
+                
+                int count = BlueprintSpawner.GetTankCount();
+                MelonLogger.Msg($"✓ Blueprint spawner ready! {count} tanks loaded.");
+                
+                if (count > 0) {
+                    var tanks = BlueprintSpawner.GetAvailableTankIds();
+                    MelonLogger.Msg("Available tanks:");
+                    foreach (var tank in tanks) {
+                        MelonLogger.Msg($"  - {tank}");
+                    }
+                }
+            }
+
+            // F8: Spawn default tank next to player
+            if (Keyboard.current.f8Key.wasPressedThisFrame)
+            {
+                SpawnTankNextToPlayer();
+            }
         }
 
-        private void Update() {
-            // Skip custom hotkeys if console is open AND focused
-            var console = Console.Instance;
-            if (console != null && Console.IsOpen && console.IsFocused())
+        private void SpawnTankNextToPlayer()
+        {
+            var player = GameObject.Find("Player");
+            if (player == null)
+            {
+                MelonLogger.Warning("Player object not found!");
                 return;
+            }
 
-            if (Keyboard.current == null)
+            string tankId = BlueprintSpawner.GetDefaultTankId();
+            if (string.IsNullOrEmpty(tankId))
+            {
+                MelonLogger.Warning("No tanks available! Press F7 first.");
                 return;
-
-            if (Keyboard.current.hKey.wasPressedThisFrame) {
-                MelonLogger.Msg("Starting host...");
-                network?.StartHost(7777);
             }
 
-            if (Keyboard.current.cKey.wasPressedThisFrame) {
-                MelonLogger.Msg("Connecting to host...");
-                network?.ConnectToHost("127.0.0.1", 7777);
-            }
+            // Spawn position: 5 units to the left of player, 1 unit up
+            Vector3 spawnPos = player.transform.position - player.transform.right * 5f + Vector3.up * 1f;
+            Quaternion spawnRot = Quaternion.LookRotation(player.transform.forward, Vector3.up);
 
-            if (Keyboard.current.pKey.wasPressedThisFrame) {
-                MelonLogger.Msg("Pinging host...");
-                network?.Send("Ping!");
-            }
+            GameObject tank = BlueprintSpawner.SpawnTank(tankId, spawnPos, spawnRot);
             
-            if (Keyboard.current.f6Key.wasPressedThisFrame) {
-                if (Keyboard.current.f6Key.wasPressedThisFrame) {
-                    
-
-                    MelonLogger.Msg("=== SCENE INSPECTION ===");
-                    SceneLogger.LogSceneDetails();
-                    SceneLogger.LogVehiclesAdvanced();
-                    SceneLogger.LogControlAssignments();
-                    SceneLogger.LogSpawners();
-                    SceneLogger.LogPlayerLinks();
-                    SceneLogger.LogPlayerFields();
-                    
-
-                    var vehiclesWithControl = GameObject.FindObjectsOfType<GameObject>(true)
-                        .Where(go =>
-                        {
-                            var comps = go.GetComponents<MonoBehaviour>();
-                            if (comps == null) return false;
-                            return comps.Any(c => c != null && (c.GetType().Name.Contains("Control") || c.GetType().Name.Contains("Driver")));
-                        });
-
-                    foreach (var vehicle in vehiclesWithControl)
-                    {
-                        SceneLogger.LogVehicleComponents(vehicle);
-                    }
-                    
-                    SceneLogger.TrackNewVehicles();
-
-                    MelonLogger.Msg("=========================");
-                }
+            if (tank != null)
+            {
+                MelonLogger.Msg($"✓ Tank '{tankId}' spawned at {spawnPos}");
+            }
+            else
+            {
+                MelonLogger.Error("✗ Tank spawn failed!");
             }
         }
     }

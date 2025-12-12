@@ -23,9 +23,9 @@ namespace SprocketMultiplayer
         
         public bool IsHost { get; private set; } //for getting Host in other values
         public bool IsClient { get; private set; }
-
         public int CurrentPort { get; private set; }
         public string CurrentIP { get; private set; } = "127.0.0.1";
+        public string LocalNickname { get; set; }
 
         public int ClientCount => connectedClients.Count;
         private readonly List<string> connectedClients = new List<string>();
@@ -45,6 +45,7 @@ namespace SprocketMultiplayer
         
         // ================= HOST =================
         public void StartHost(int port) {
+
             try {
                 if (server != null) {
                     MelonLogger.Msg("Host already running.");
@@ -59,6 +60,8 @@ namespace SprocketMultiplayer
                 } catch {
                     MelonLogger.Warning("Could not fetch host Steam nickname; using fallback 'Host'.");
                 }
+
+                LocalNickname = hostNickname;
 
                 IsClient = false;
 
@@ -206,11 +209,18 @@ namespace SprocketMultiplayer
 
                 // Send nickname to host
                 try {
-                    string myNickname = "Player";
-                    try { myNickname = MenuActions.GetSteamNickname(); } catch {}
-                    byte[] joinData = Encoding.UTF8.GetBytes("JOIN:" + myNickname);
+                    string nickname = "Player";
+                    try
+                    {
+                        nickname = MenuActions.GetSteamNickname();
+                    }
+                    catch { }
+                    
+                    LocalNickname = nickname;
+                    
+                    byte[] joinData = Encoding.UTF8.GetBytes("JOIN:" + nickname);
                     stream.Write(joinData, 0, joinData.Length);
-                    MelonLogger.Msg($"Sent JOIN with nickname '{myNickname}' to host.");
+                    MelonLogger.Msg($"Sent JOIN with nickname '{nickname}' to host.");
                 }
                 catch (Exception ex) {
                     MelonLogger.Warning($"Failed to send JOIN to host: {ex.Message}");
@@ -232,22 +242,21 @@ namespace SprocketMultiplayer
         }
 
         private async System.Threading.Tasks.Task ReceiveFromHostAsync() {
-            try {
-                byte[] buffer = new byte[BufferSize];
-                while (IsClient && client?.Connected == true)
+        try {
+            byte[] buffer = new byte[BufferSize];
+            while (IsClient && client?.Connected == true)
+            {
+                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                if (bytesRead == 0)
                 {
-                    int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                    if (bytesRead == 0)
-                    {
-                        CleanupClient();
-                        break;
-                    }
-                    
-                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
-
+                    CleanupClient();
+                    break;
+                }
+                
+                string message = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
                 MelonLogger.Msg($"[Client] Received from host: {message}");
 
-                // If server sends lobby state:
+                // === LOBBY STATE ===
                 if (message.StartsWith("LOBBY_STATE:")) {
                     string csv = message.Substring("LOBBY_STATE:".Length);
                     var names = new List<string>();
@@ -258,45 +267,62 @@ namespace SprocketMultiplayer
                         }
                     }
 
-                    // Ensure Lobby UI exists. If not — create it (pass mainMenu if available).
-                    // apply state if Lobby already instantiated; otherwise log and wait.
                     if (Lobby.Panel == null) {
-                        MelonLogger.Msg("[Client] Lobby UI not present yet. Waiting for LobbyCanvas...");
+                        MelonLogger.Msg("[Client] Lobby UI not present yet. Waiting...");
                         MelonCoroutines.Start(Lobby.WaitForLobbyCanvasThenCreateUI(names));
-                        continue; // keep listening for next messages
-                    }
-
-                    
-                    Lobby.HandleIncomingLobbyState(names);
-                    MelonLogger.Msg("[Client] Applied lobby state from host.");
-                }
-                else {
-                    // general message handling
-                    MelonLogger.Msg($"[Client] Received from host: {message}");
-
-                    // =============== MAP LOAD ===============
-                    if (message.StartsWith("MAP:"))
-                    {
-                        string map = message.Substring(4).Trim();
-                        MelonLogger.Msg("[Client] Host selected map: " + map + " — loading scene.");
-                        UnityEngine.SceneManagement.SceneManager.LoadScene(map);
                         continue;
                     }
 
-                    // =============== Ping ===============
-                    if (message == "Ping!")
+                    Lobby.HandleIncomingLobbyState(names);
+                    MelonLogger.Msg("[Client] Applied lobby state from host.");
+                    continue;
+                }
+
+                // === MAP LOAD ===
+                if (message.StartsWith("MAP:"))
+                {
+                    string map = message.Substring(4).Trim();
+                    MelonLogger.Msg("[Client] Host loading map: " + map);
+                    UnityEngine.SceneManagement.SceneManager.LoadScene(map);
+                    continue;
+                }
+
+                // === SPAWN COMMAND ===
+                if (message.StartsWith("SPAWN:"))
+                {
+                    // Format: SPAWN:{nickname}:{tankName}
+                    string[] parts = message.Split(':');
+                    if (parts.Length >= 3)
                     {
-                        Send("Pong!");
-                        continue; // no it's not redundant fuck you raider
+                        string nickname = parts[1];
+                        string tankName = parts[2];
+                        
+                        MelonLogger.Msg($"[Client] Processing spawn: {nickname} -> {tankName}");
+                        MultiplayerManager.Instance.OnClientSpawnMessage(nickname, tankName);
                     }
+                    else
+                    {
+                        MelonLogger.Warning($"[Client] Invalid SPAWN message format: {message}");
+                    }
+                    continue;
                 }
+
+                // === PING ===
+                if (message == "Ping!")
+                {
+                    Send("Pong!");
+                    continue;
                 }
-            }
-            catch (Exception ex) {
-                MelonLogger.Error($"ReceiveFromHostAsync error: {ex.Message}");
-                CleanupClient();
+
+                // Unknown message
+                MelonLogger.Msg($"[Client] Unhandled message: {message}");
             }
         }
+        catch (Exception ex) {
+            MelonLogger.Error($"ReceiveFromHostAsync error: {ex.Message}");
+            CleanupClient();
+        }
+    }
         
 
         // ================= POLLING =================

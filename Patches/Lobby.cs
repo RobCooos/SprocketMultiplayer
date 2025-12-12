@@ -36,11 +36,17 @@ namespace SprocketMultiplayer.Patches {
         private static string hostLobbyName = null;
         
         public static bool LobbyUIReady = false;
-        
         private static List<string> pendingLobbyState = null;
         private static bool LobbyUICreated = false;
         private static Dictionary<GameObject, string> tankButtonMap = new Dictionary<GameObject, string>();
         private static Dictionary<GameObject, GameObject> tankLabelMap = new Dictionary<GameObject, GameObject>();
+        public static Dictionary<string, PlayerInfo> Players = new Dictionary<string, PlayerInfo>();
+        private static List<string> pendingPlayers = new List<string>();
+        
+        public class PlayerInfo {
+            public string Tank;
+            public int Ping;
+        }
         
         private static bool IsReady() {
             return TMP_Settings.instance != null &&
@@ -353,18 +359,18 @@ namespace SprocketMultiplayer.Patches {
             throw;
         }
     }
-
         
         private static void OnTankClicked(GameObject tankButton) {
             if (tankButtonMap.ContainsKey(tankButton)) {
                 string tankName = tankButtonMap[tankButton];
                 MelonLogger.Msg($"[Lobby] Tank selected: {tankName}");
-                // TODO: Store selected tank for the player
+                
+                SelectedTank = tankName;
+                
                 // TODO: Update UI to show selection
             }
         }
         
-
         private class TankEntryHandler : MonoBehaviour {
             public string tankName;
             public GameObject label;
@@ -629,7 +635,6 @@ namespace SprocketMultiplayer.Patches {
             SendMapToClients("Railway");
         }
 
-
         private static GameObject CreatePlayerSlot(string name) {
         var go = new GameObject("PlayerSlot");
         var rect = go.AddComponent<RectTransform>();
@@ -743,52 +748,80 @@ namespace SprocketMultiplayer.Patches {
         
         
         // ================= PLAYER MANAGEMENT =================
+        public static void SetPlayerTank(string nickname, string tankName) {
+            if (!Players.TryGetValue(nickname, out var info))
+                return;
+
+            info.Tank = tankName;
+            RefreshPlayerSlot(nickname);
+        }
+        private static void RefreshPlayerSlot(string nickname) {
+            
+            for (int i = 0; i < PlayerSlots.Count; i++) {
+                var slot = PlayerSlots[i];
+                if (slot == null) continue;
+
+                if (slot.text.Contains($": {nickname}")) {
+                    var info = Players[nickname];
+                    string tankStr = string.IsNullOrEmpty(info.Tank) ? "" : $" — {info.Tank}";
+                    string pingStr = info.Ping > 0 ? $", {info.Ping} ms" : "";
+
+                    slot.text = $"Player{i+1}: {nickname}{tankStr}{pingStr}";
+                    MelonLogger.Msg($"[Lobby] Refreshed slot for {nickname}: {slot.text}");
+                    return;
+                }
+            }
+        }
+
         public static bool TryAddPlayer(string nickname) {
             if (string.IsNullOrEmpty(nickname)) return false;
 
             // Check if already present
-            for (int i = 0; i < PlayerSlots.Count; i++) {
-                var slot = PlayerSlots[i];
-                string text = slot != null ? slot.text : null;
-                if (!string.IsNullOrEmpty(text) && text.Contains($": {nickname}"))
-                    return false;
-            }
+            if (Players.ContainsKey(nickname))
+                return false;
 
             // Count current players
             int filled = 0;
             for (int i = 0; i < PlayerSlots.Count; i++) {
                 var slot = PlayerSlots[i];
-                string text = slot != null ? slot.text : null;
+                string text = slot?.text;
                 if (!string.IsNullOrEmpty(text) && text != $"Player{i + 1}: {EMPTY}")
                     filled++;
             }
-
             if (filled >= MAX_PLAYERS) return false;
 
-            // Find first empty slot
+            // find empty slot
             for (int i = 0; i < PlayerSlots.Count; i++) {
                 var slot = PlayerSlots[i];
-                string currentText = slot != null ? slot.text : null;
-                if (string.IsNullOrEmpty(currentText) || currentText == $"Player{i + 1}: {EMPTY}") {
-                    if (slot != null) slot.text = $"Player{i + 1}: {nickname}";
-                    else {
-                        // fallback: find the Text component under slot GameObject and set it
-                        var slotGO = GameObject.Find($"PlayerSlot");
-                    }
+                string currentText = slot?.text;
+                if (string.IsNullOrEmpty(currentText) || currentText == $"Player{i+1}: {EMPTY}") {
+                    // Assign the slot directly
+                    slot.text = $"Player{i+1}: {nickname}";
+                    
+                    Players[nickname] = new PlayerInfo {
+                        Tank = "",
+                        Ping = 0
+                    };
+                    
+                    RefreshPlayerSlot(nickname);
+                    MelonLogger.Msg($"[Lobby] Added player {nickname} to slot {i+1}");
+
                     return true;
                 }
             }
 
             return false;
         }
+
         
         public static void RemovePlayer(string nickname) {
             if (string.IsNullOrEmpty(nickname)) return;
 
             for (int i = 0; i < PlayerSlots.Count; i++) {
-                var expected = $"Player{i + 1}: {nickname}";
-                if (PlayerSlots[i].text == expected) {
-                    PlayerSlots[i].text = $"Player{i + 1}: {EMPTY}";
+                var slot = PlayerSlots[i];
+                if (slot.text.Contains($": {nickname}")) {
+                    slot.text = $"Player{i + 1}: {EMPTY}";
+                    MelonLogger.Msg($"[Lobby] Removed player {nickname} from slot {i+1}");
                     return;
                 }
             }
@@ -797,35 +830,30 @@ namespace SprocketMultiplayer.Patches {
         public static void OnPlayerConnected(string nickname) {
             if (!TryAddPlayer(nickname)) {
                 MelonLogger.Msg($"Cannot add {nickname}: Lobby full or already present.");
+                return;
             }
+            
+            if (!Players.ContainsKey(nickname)) {
+                Players[nickname] = new PlayerInfo {
+                    Tank = "",
+                    Ping = 0
+                };
+            }
+            
+            RefreshPlayerSlot(nickname);
         }
-
+        
         public static void OnPlayerDisconnected(string nickname) {
+            Players.Remove(nickname);
             RemovePlayer(nickname);
         }
         
         public static void UpdatePlayerPing(string nickname, int ping) {
-            if (PlayerSlots == null) {
-                MelonLogger.Msg("[Lobby] UpdatePlayerPing: PlayerSlots is null => abort");
+            if (!Players.TryGetValue(nickname, out var info))
                 return;
-            }
 
-            for (int i = 0; i < PlayerSlots.Count; i++) {
-                var slot = PlayerSlots[i];
-                if (slot == null) {
-                    // skip null TMPs
-                    continue;
-                }
-                var text = slot.text ?? "";
-                if (text.Contains($": {nickname}")) {
-                    try {
-                        slot.text = $"Player{i+1}: {nickname}, {ping} ms";
-                    } catch (Exception ex) {
-                        MelonLogger.Error($"[Lobby] Failed to set ping text for slot {i+1}: {ex.Message}");
-                    }
-                    break;
-                }
-            }
+            info.Ping = ping;
+            RefreshPlayerSlot(nickname);
         }
         
         
@@ -844,17 +872,18 @@ namespace SprocketMultiplayer.Patches {
 
         public static void ApplyLobbyState(List<string> nicknames) {
             if (!LobbyUIReady || Panel == null || PlayerSlots == null || PlayerSlots.Count == 0) {
-                MelonLogger.Msg("[Lobby] ApplyLobbyState called while UI not ready; caching.");
                 pendingLobbyState = new List<string>(nicknames);
                 return;
             }
+            if (PlayerSlots == null || PlayerSlots.Count == 0) {
+                pendingPlayers = new List<string>(nicknames);
+                return;
+            }
 
-            // clamp nickname list to MAX_PLAYERS
             var safeList = new List<string>();
             for (int i = 0; i < Math.Min(nicknames.Count, PlayerSlots.Count); i++)
                 safeList.Add(nicknames[i]);
 
-            // determine host name (first entry) and update header
             if (safeList.Count > 0 && !string.IsNullOrEmpty(safeList[0])) {
                 hostLobbyName = safeList[0];
                 if (headerTMP != null && !NetworkManager.Instance.IsHost) {
@@ -862,22 +891,20 @@ namespace SprocketMultiplayer.Patches {
                 }
             }
 
-            // Fill slots (never exceed PlayerSlots)
             for (int i = 0; i < PlayerSlots.Count; i++) {
-                string text;
-                if (i < safeList.Count && !string.IsNullOrEmpty(safeList[i]))
-                    text = $"Player{i + 1}: {safeList[i]}";
-                else
-                    text = $"Player{i + 1}: {EMPTY}";
+                string nickname = (i < safeList.Count) ? safeList[i] : null;
 
-                if (PlayerSlots[i] != null) {
-                    try {
-                        PlayerSlots[i].text = text;
-                    } catch (Exception ex) {
-                        MelonLogger.Error($"[Lobby] Failed to set text for slot {i+1}: {ex.Message}");
+                if (!string.IsNullOrEmpty(nickname)) {
+                    if (!Players.ContainsKey(nickname)) {
+                        Players[nickname] = new PlayerInfo {
+                            Tank = "",
+                            Ping = 0
+                        };
                     }
+
+                    PlayerSlots[i].text = $"Player{i + 1}: {nickname}";
                 } else {
-                    MelonLogger.Warning($"[Lobby] Cannot set text for slot {i+1}: TMP is null.");
+                    PlayerSlots[i].text = $"Player{i + 1}: {EMPTY}";
                 }
             }
         }
