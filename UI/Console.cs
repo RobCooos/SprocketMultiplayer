@@ -222,6 +222,7 @@ namespace SprocketMultiplayer.UI
                     AddLog("connect <ip> <port> - Connect to an existing host");
                     AddLog("status              - Show current network status");
                     AddLog("clients             - Show connected clients (Host only)");
+                    AddLog("inspect <target>    - Inspect game assemblies (debug)");
                     AddLog("clear               - Clear the console log");
                     AddLog("time                - Display system time");
                     AddLog("info                - Show mod information");
@@ -334,6 +335,36 @@ namespace SprocketMultiplayer.UI
                     AddLog("Send this to dev with full Console Log, this is most likely his mistake.");
                     break;
                 }
+                
+                case "inspect":
+                    if (parts.Length < 2)
+                    {
+                        AddLog("Usage: inspect <spawning|vehicles|search>");
+                        break;
+                    }
+                    
+                    switch (parts[1].ToLower())
+                    {
+                        case "spawning":
+                            AddLog("Inspecting Vehicle.Spawning assembly...");
+                            Patches.AssemblyInspector.InspectVehicleSpawning();
+                            AddLog("Check MelonLoader console for results.");
+                            break;
+                        case "vehicles":
+                            AddLog("Inspecting Vehicles assembly...");
+                            Patches.AssemblyInspector.InspectVehiclesAssembly();
+                            AddLog("Check MelonLoader console for results.");
+                            break;
+                        case "search":
+                            AddLog("Searching for spawn methods...");
+                            Patches.AssemblyInspector.SearchForSpawningMethods();
+                            AddLog("Check MelonLoader console for results.");
+                            break;
+                        default:
+                            AddLog("Unknown inspect target. Use: spawning, vehicles, or search");
+                            break;
+                    }
+                    break;
                 
                 default:
                     AddLog($"Unknown command: {cmd}");

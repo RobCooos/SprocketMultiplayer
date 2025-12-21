@@ -358,16 +358,29 @@ namespace SprocketMultiplayer.Patches {
             MelonLogger.Error($"[Lobby] Exception in CreateTankEntry for {tank?.Name}: {ex.Message}\n{ex.StackTrace}");
             throw;
         }
-    }
+            }
         
         private static void OnTankClicked(GameObject tankButton) {
             if (tankButtonMap.ContainsKey(tankButton)) {
                 string tankName = tankButtonMap[tankButton];
                 MelonLogger.Msg($"[Lobby] Tank selected: {tankName}");
-                
+        
                 SelectedTank = tankName;
-                
-                // TODO: Update UI to show selection
+        
+                // Send tank selection to host/server
+                if (NetworkManager.Instance != null) {
+                    string nickname = NetworkManager.Instance.LocalNickname;
+            
+                    if (NetworkManager.Instance.IsHost) {
+                        // Host: directly register their own tank
+                        MultiplayerManager.Instance.SetPlayerTank(nickname, tankName);
+                        MelonLogger.Msg($"[Lobby] Host registered tank: {tankName}");
+                    } else {
+                        // Client: send tank choice to host
+                        NetworkManager.Instance.Send($"TANK_SELECT:{nickname}:{tankName}");
+                        MelonLogger.Msg($"[Lobby] Client sent tank selection to host: {tankName}");
+                    }
+                }
             }
         }
         
@@ -628,11 +641,48 @@ namespace SprocketMultiplayer.Patches {
             }
         }
         
-        public static void OnStartButtonPressed()
+        private static void OnStartButtonPressed()
         {
-            MelonLogger.Msg("[Lobby] Host pressed Start — loading Railway");
-            SceneManager.LoadScene("Railway");
-            SendMapToClients("Railway");
+            MelonLogger.Msg("[Lobby] ========== HOST PRESSED START ==========");
+    
+            try {
+                // Ensure everyone selected a tank
+                if (string.IsNullOrEmpty(SelectedTank)) {
+                    MelonLogger.Warning("[Lobby] Somebody hasn't selected a tank! Using default.");
+                    VehicleSpawner.EnsureInitialized();
+                    SelectedTank = VehicleSpawner.GetDefaultTankId();
+            
+                    if (!string.IsNullOrEmpty(SelectedTank)) {
+                        MelonLogger.Msg($"[Lobby] Using default tank: {SelectedTank}");
+                        if (MultiplayerManager.Instance != null && NetworkManager.Instance != null) {
+                            MultiplayerManager.Instance.SetPlayerTank(
+                                NetworkManager.Instance.LocalNickname, 
+                                SelectedTank
+                            );
+                        }
+                    } else {
+                        MelonLogger.Error("[Lobby] No tanks available!");
+                    }
+                } else {
+                    MelonLogger.Msg($"[Lobby] Host tank: {SelectedTank}");
+                }
+                
+                // Send map load command to all clients
+                MelonLogger.Msg("[Lobby] Broadcasting map to clients...");
+                SendMapToClients("Railway");
+        
+                // Load scene using Sprocket's proper scene manager
+                MelonLogger.Msg("[Lobby] Starting scene load...");
+                MelonCoroutines.Start(LoadSprocketScene("Railway"));
+            } catch (Exception ex) {
+                MelonLogger.Error($"[Lobby] Error in OnStartButtonPressed: {ex.Message}");
+                MelonLogger.Error($"[Lobby] Stack: {ex.StackTrace}");
+            }
+        }
+
+        private static IEnumerator LoadSceneAfterDelay(string sceneName) {
+            yield return new WaitForSeconds(0.1f);
+            SceneManager.LoadScene(sceneName);
         }
 
         private static GameObject CreatePlayerSlot(string name) {
@@ -697,7 +747,6 @@ namespace SprocketMultiplayer.Patches {
         return go;
     }
         
-
         private static void AddPlaceholderText(Transform parent, string text) {
             var textGO = new GameObject("PlaceholderText");
             textGO.transform.SetParent(parent, false);
@@ -746,6 +795,151 @@ namespace SprocketMultiplayer.Patches {
             textRect.offsetMax = Vector2.zero;
         }
         
+        // Below are functions to load scene properly.
+        
+        private static IEnumerator LoadSprocketScene(string sceneName) {
+        MelonLogger.Msg($"[Lobby] Loading scene '{sceneName}'...");
+        
+        // Small delay to ensure network messages are sent
+        yield return new WaitForSeconds(0.2f);
+        
+        try
+        {
+            // Find ISceneManager instance
+            var sceneManager = GetSprocketSceneManager();
+            
+            if (sceneManager == null)
+            {
+                MelonLogger.Error("[Lobby] Could not find ISceneManager! Falling back to Unity SceneManager.");
+                SceneManager.LoadScene(sceneName);
+                yield break;
+            }
+            
+            MelonLogger.Msg($"[Lobby] Found ISceneManager, loading scene '{sceneName}'...");
+            
+            // Create cancellation token
+            var cts = new Il2CppSystem.Threading.CancellationTokenSource();
+            var ct = cts.Token;
+            
+            // Load scene using Sprocket's scene manager
+            // Using the proper Load<T> method with ScenarioGameState
+            var loadTask = sceneManager.Load<Il2CppSprocket.ScenarioGameState>(
+                sceneName,
+                null, // no arguments
+                Il2CppSprocket.SceneManagement.SceneLoadOptions.None,
+                ct
+            );
+            
+            MelonLogger.Msg("[Lobby] Scene load task started, waiting for completion...");
+            
+            // Wait for task to complete
+            int timeout = 0;
+            while (!loadTask.IsCompleted && !loadTask.IsFaulted && !loadTask.IsCanceled && timeout < 100) {
+                timeout++;
+            }
+            
+            if (timeout >= 100) {
+                MelonLogger.Error("[Lobby] Scene load timeout!");
+                cts.Cancel();
+                yield break;
+            }
+            
+            if (loadTask.IsFaulted)
+            {
+                MelonLogger.Error("[Lobby] Scene load faulted!");
+                if (loadTask.Exception != null)
+                {
+                    MelonLogger.Error($"[Lobby] Exception: {loadTask.Exception.Message}");
+                }
+                yield break;
+            }
+            
+            if (loadTask.IsCanceled)
+            {
+                MelonLogger.Error("[Lobby] Scene load was canceled!");
+                yield break;
+            }
+            
+            MelonLogger.Msg($"[Lobby] ✓ Scene '{sceneName}' loaded successfully!");
+        }
+        catch (Exception ex)
+        {
+            MelonLogger.Error($"[Lobby] Exception loading scene: {ex.Message}");
+            MelonLogger.Error($"[Lobby] Stack: {ex.StackTrace}");
+            
+            // Fallback to Unity scene manager
+            MelonLogger.Warning("[Lobby] Falling back to Unity SceneManager...");
+            SceneManager.LoadScene(sceneName);
+        }
+    }
+
+        private static Il2CppSprocket.SceneManagement.ISceneManager GetSprocketSceneManager() {
+            try
+            {
+                // Search for ISceneManager in scene
+                var allObjects = UnityEngine.Object.FindObjectsOfType<MonoBehaviour>();
+                
+                foreach (var obj in allObjects)
+                {
+                    if (obj == null) continue;
+                    
+                    // Look for objects with "SceneManager" in their type name
+                    if (obj.GetType().FullName.Contains("SceneManager"))
+                    {
+                        var il2cppObj = obj as Il2CppSystem.Object;
+                        if (il2cppObj != null)
+                        {
+                            // Try to cast to ISceneManager
+                            var sceneManager = il2cppObj.TryCast<Il2CppSprocket.SceneManagement.ISceneManager>();
+                            if (sceneManager != null)
+                            {
+                                MelonLogger.Msg($"[Lobby] Found ISceneManager: {obj.GetType().FullName}");
+                                return sceneManager;
+                            }
+                        }
+                    }
+                }
+                
+                // Try static instance pattern
+                var sceneManagerType = typeof(Il2CppSprocket.SceneManagement.ISceneManager);
+                var assembly = sceneManagerType.Assembly;
+                
+                foreach (var type in assembly.GetTypes())
+                {
+                    if (type.IsInterface || type.IsAbstract) continue;
+                    if (!typeof(Il2CppSprocket.SceneManagement.ISceneManager).IsAssignableFrom(type)) continue;
+                    
+                    var instanceProp = type.GetProperty("Instance",
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                    
+                    if (instanceProp != null)
+                    {
+                        var instance = instanceProp.GetValue(null);
+                        if (instance != null)
+                        {
+                            var il2cppObj = instance as Il2CppSystem.Object;
+                            if (il2cppObj != null)
+                            {
+                                var sceneManager = il2cppObj.TryCast<Il2CppSprocket.SceneManagement.ISceneManager>();
+                                if (sceneManager != null)
+                                {
+                                    MelonLogger.Msg($"[Lobby] Found ISceneManager via static: {type.FullName}");
+                                    return sceneManager;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                MelonLogger.Warning("[Lobby] Could not find ISceneManager");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Lobby] Error getting ISceneManager: {ex.Message}");
+                return null;
+            }
+        }
         
         // ================= PLAYER MANAGEMENT =================
         public static void SetPlayerTank(string nickname, string tankName) {
@@ -812,7 +1006,6 @@ namespace SprocketMultiplayer.Patches {
 
             return false;
         }
-
         
         public static void RemovePlayer(string nickname) {
             if (string.IsNullOrEmpty(nickname)) return;

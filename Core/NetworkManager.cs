@@ -359,17 +359,30 @@ namespace SprocketMultiplayer
                     if (clientNicknames.ContainsKey(c)) clientNicknames.Remove(c);
                     BroadcastLobbyState();
                     continue;
-
                 }
 
                 if (c.GetStream().DataAvailable)
                 {
                     byte[] buffer = new byte[BufferSize];
                     int bytesRead = c.GetStream().Read(buffer, 0, buffer.Length);
-                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                    string message = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
                     MelonLogger.Msg($"Received from {c.Client.RemoteEndPoint}: {message}");
 
-                    // handle pong
+                    // === TANK SELECTION (NEW) ===
+                    if (message.StartsWith("TANK_SELECT:")) {
+                        // Format: TANK_SELECT:{nickname}:{tankName}
+                        string[] parts = message.Split(':');
+                        if (parts.Length >= 3) {
+                            string nickname = parts[1];
+                            string tankName = parts[2];
+                            
+                            MelonLogger.Msg($"[Host] Player {nickname} selected tank: {tankName}");
+                            MultiplayerManager.Instance.SetPlayerTank(nickname, tankName);
+                        }
+                        continue;
+                    }
+
+                    // === PONG ===
                     if (message == "Pong!") {
                         if (pingSentTime.ContainsKey(c)) {
                             int ping = (int)((DateTime.UtcNow - pingSentTime[c]).TotalMilliseconds);
@@ -389,10 +402,8 @@ namespace SprocketMultiplayer
                 c.Close();
             }
         }
-        }
+    }
         
-
-
         // ================= SENDING =================
         public void Send(string msg) {
             if (isHost) {
