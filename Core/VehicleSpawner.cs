@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using Il2CppInterop.Runtime;
 using Il2CppSprocket.Gameplay.VehicleControl;
 using Il2CppSprocket.TechTrees;
 using UnityEngine;
@@ -482,32 +483,37 @@ namespace SprocketMultiplayer.Core
 
         /// <summary>
         /// Get IVehicleFactory instance
-        /// Per Hamish: Factory must exist in scene (created when vehicles are present)
+        /// Per Hamish: Use ServiceLocator to get the factory
         /// </summary>
         private static IVehicleFactory GetVehicleFactory()
         {
             if (cachedFactory != null) return cachedFactory;
 
+            MelonLogger.Msg("[VehicleSpawner] Searching for IVehicleFactory in scene...");
+
             try
             {
-                // Search for IVehicleFactory in scene
+                // Search all MonoBehaviours in scene for IVehicleFactory
                 var allObjects = UnityEngine.Object.FindObjectsOfType<MonoBehaviour>();
-                
-                MelonLogger.Msg($"[VehicleSpawner] Searching {allObjects.Length} objects for IVehicleFactory...");
                 
                 foreach (var obj in allObjects)
                 {
                     if (obj == null) continue;
-                    
+
                     try
                     {
+                        // Check type name contains "Factory" or "Vehicle"
+                        string typeName = obj.GetType().FullName;
+                        if (!typeName.Contains("Factory") && !typeName.Contains("Vehicle")) continue;
+
+                        // Try to cast to IVehicleFactory
                         var il2cppObj = obj as Il2CppSystem.Object;
                         if (il2cppObj == null) continue;
 
                         var factory = il2cppObj.TryCast<IVehicleFactory>();
                         if (factory != null)
                         {
-                            MelonLogger.Msg($"[VehicleSpawner] Found IVehicleFactory: {obj.GetType().Name}");
+                            MelonLogger.Msg($"[VehicleSpawner] ✓ Found IVehicleFactory: {typeName}");
                             cachedFactory = factory;
                             return factory;
                         }
@@ -515,41 +521,74 @@ namespace SprocketMultiplayer.Core
                     catch { }
                 }
 
-                // Try looking for factory via IVehiclePartFactoryFactory.Instance
-                try
+                // Try searching by interface type directly
+                var assembly = typeof(IVehicleFactory).Assembly;
+                foreach (var type in assembly.GetTypes())
                 {
-                    var factoryFactoryType = typeof(IVehiclePartFactoryFactory);
-                    var instanceProp = factoryFactoryType.GetProperty("Instance",
+                    if (type.IsInterface || type.IsAbstract) continue;
+                    if (!typeof(IVehicleFactory).IsAssignableFrom(type)) continue;
+                    
+                    // Check for static Instance property
+                    var instanceProp = type.GetProperty("Instance", 
                         System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
                     
                     if (instanceProp != null)
                     {
-                        var factoryFactory = instanceProp.GetValue(null);
-                        if (factoryFactory != null)
+                        var instance = instanceProp.GetValue(null);
+                        if (instance != null)
                         {
-                            MelonLogger.Msg("[VehicleSpawner] Found IVehiclePartFactoryFactory.Instance");
-                            
-                            // Try to get main factory from factory factory
-                            var createMethod = factoryFactoryType.GetMethod("Create");
-                            if (createMethod != null)
+                            var il2cppObj = instance as Il2CppSystem.Object;
+                            if (il2cppObj != null)
                             {
-                                MelonLogger.Msg("[VehicleSpawner] IVehiclePartFactoryFactory has Create method - but we need IVehicleFactory directly");
+                                var factory = il2cppObj.TryCast<IVehicleFactory>();
+                                if (factory != null)
+                                {
+                                    MelonLogger.Msg($"[VehicleSpawner] ✓ Found IVehicleFactory via static Instance: {type.Name}");
+                                    cachedFactory = factory;
+                                    return factory;
+                                }
                             }
                         }
                     }
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[VehicleSpawner] Error checking factory factory: {ex.Message}");
+
+                    // Try finding instances of the type via Unity's FindObjectsOfType using MonoBehaviour as fallback
+                    try
+                    {
+                        var allMonos = UnityEngine.Object.FindObjectsOfType<MonoBehaviour>();
+                        foreach (var obj in allMonos)
+                        {
+                            if (obj == null) continue;
+
+                            var objType = obj.GetType();
+                            if (!type.IsAssignableFrom(objType)) continue; // Only types that implement IVehicleFactory
+
+                            var il2cppObj = obj as Il2CppSystem.Object;
+                            if (il2cppObj == null) continue;
+
+                            var factory = il2cppObj.TryCast<IVehicleFactory>();
+                            if (factory != null)
+                            {
+                                MelonLogger.Msg($"[VehicleSpawner] Found IVehicleFactory via MonoBehaviour search: {objType.Name}");
+                                cachedFactory = factory;
+                                return factory;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Error($"[VehicleSpawner] Error during MonoBehaviour FindObjectsOfType search: {ex.Message}");
+                    }
                 }
 
                 MelonLogger.Warning("[VehicleSpawner] Could not find IVehicleFactory in scene");
-                MelonLogger.Warning("[VehicleSpawner] Factory typically only exists when vehicles are already spawned");
+                MelonLogger.Warning("[VehicleSpawner] The factory is created when the game spawns its first vehicle");
+                MelonLogger.Warning("[VehicleSpawner] Try spawning a vehicle through the game UI first, then try multiplayer spawning");
                 return null;
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"[VehicleSpawner] Error getting IVehicleFactory: {ex.Message}");
+                MelonLogger.Error($"[VehicleSpawner] Error searching for IVehicleFactory: {ex.Message}");
+                MelonLogger.Error($"[VehicleSpawner] Stack trace: {ex.StackTrace}");
                 return null;
             }
         }
@@ -741,6 +780,118 @@ namespace SprocketMultiplayer.Core
             cachedRegister = null;
             cachedController = null;
             MelonLogger.Msg("[VehicleSpawner] Cleared cached references");
+        }
+
+        /// <summary>
+        /// Try to initialize the factory by triggering the game's scene systems
+        /// Per Hamish: "Scenes are loaded through the ISceneManager instance"
+        /// This should initialize IVehicleFactory in the scene
+        /// </summary>
+        public static void TryInitializeFactory()
+        {
+            MelonLogger.Msg("[VehicleSpawner] Attempting to initialize factory via game systems...");
+            
+            try
+            {
+                // Look for ISceneManager
+                var sceneManagerType = typeof(IVehicleFactory).Assembly.GetTypes()
+                    .FirstOrDefault(t => t.Name == "ISceneManager" || t.FullName?.Contains("ISceneManager") == true);
+                
+                if (sceneManagerType != null)
+                {
+                    MelonLogger.Msg($"[VehicleSpawner] Found ISceneManager type: {sceneManagerType.FullName}");
+                    
+                    // Try to find instance
+                    var instanceProp = sceneManagerType.GetProperty("Instance", 
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                    
+                    if (instanceProp != null)
+                    {
+                        var sceneManager = instanceProp.GetValue(null);
+                        if (sceneManager != null)
+                        {
+                            MelonLogger.Msg("[VehicleSpawner] ✓ Got ISceneManager instance");
+                            // The factory should now be available in the scene
+                            return;
+                        }
+                    }
+                }
+                
+                // Alternative: Look for game state objects that might initialize the factory
+                var allObjects = UnityEngine.Object.FindObjectsOfType<MonoBehaviour>();
+                foreach (var obj in allObjects)
+                {
+                    if (obj == null) continue;
+                    
+                    string typeName = obj.GetType().FullName;
+                    
+                    // Look for game state or scenario managers
+                    if (typeName.Contains("GameState") || typeName.Contains("Scenario") || typeName.Contains("Manager"))
+                    {
+                        MelonLogger.Msg($"[VehicleSpawner] Found potential game manager: {typeName}");
+                        
+                        // The factory should be initialized when these objects exist
+                        // Try to get it now
+                        var factory = GetVehicleFactory();
+                        if (factory != null)
+                        {
+                            MelonLogger.Msg("[VehicleSpawner] ✓ Factory is now available!");
+                            return;
+                        }
+                    }
+                }
+                
+                MelonLogger.Warning("[VehicleSpawner] Could not find scene initialization systems");
+                MelonLogger.Warning("[VehicleSpawner] Factory may need to be initialized by spawning through game UI first");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[VehicleSpawner] Error initializing factory: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Check if the factory is available
+        /// </summary>
+        public static bool IsFactoryAvailable()
+        {
+            if (cachedFactory != null) return true;
+            
+            var factory = GetVehicleFactory();
+            return factory != null;
+        }
+
+        /// <summary>
+        /// Wait for factory to become available (for use in coroutines)
+        /// Returns true if factory became available, false if timeout
+        /// </summary>
+        public static IEnumerator WaitForFactory(int maxWaitSeconds = 10)
+        {
+            MelonLogger.Msg($"[VehicleSpawner] Waiting for factory (max {maxWaitSeconds}s)...");
+            
+            int waited = 0;
+            while (waited < maxWaitSeconds)
+            {
+                if (IsFactoryAvailable())
+                {
+                    MelonLogger.Msg("[VehicleSpawner] ✓ Factory is available!");
+                    yield return true;
+                    yield break;
+                }
+                
+                yield return new WaitForSeconds(1f);
+                waited++;
+                
+                if (waited % 3 == 0)
+                {
+                    MelonLogger.Msg($"[VehicleSpawner] Still waiting for factory... ({waited}s/{maxWaitSeconds}s)");
+                }
+            }
+            
+            MelonLogger.Error("[VehicleSpawner] ✗ Factory did not become available!");
+            MelonLogger.Error("[VehicleSpawner] The IVehicleFactory is only created when the game spawns its first vehicle.");
+            MelonLogger.Error("[VehicleSpawner] WORKAROUND: Spawn a vehicle through the game UI (press ESC > Spawn Vehicle) first, then try multiplayer.");
+            yield return false;
         }
 
         // ========== PUBLIC API ==========

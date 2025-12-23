@@ -143,7 +143,7 @@ namespace SprocketMultiplayer
                     names.Add(nick);
             }
 
-            // Limit to MAX_PLAYERS (match Lobby.MAX_PLAYERS)
+            // Limit to MAX_PLAYERS
             int max = 4; // keep in sync with Lobby.MAX_PLAYERS
             if (names.Count > max) names = names.GetRange(0, max);
 
@@ -151,7 +151,7 @@ namespace SprocketMultiplayer
             string csv = string.Join(",", names);
             string msg = "LOBBY_STATE:" + csv;
 
-            // Send to all clients (copy list to avoid modification during loop)
+            // Send to all clients
             foreach (var c in clients.ToArray()) {
                 try {
                     SendToClient(c, msg);

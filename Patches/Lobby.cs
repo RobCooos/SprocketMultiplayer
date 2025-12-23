@@ -671,7 +671,7 @@ namespace SprocketMultiplayer.Patches {
                 MelonLogger.Msg("[Lobby] Broadcasting map to clients...");
                 SendMapToClients("Railway");
         
-                // Load scene using Sprocket's proper scene manager
+                // Try loading scene using Sprocket's proper scene manager
                 MelonLogger.Msg("[Lobby] Starting scene load...");
                 MelonCoroutines.Start(LoadSprocketScene("Railway"));
             } catch (Exception ex) {

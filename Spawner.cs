@@ -3,15 +3,10 @@ using System.Collections.Generic;
 using UnityEngine;
 using MelonLoader;
 using Il2CppSprocket.Vehicles;
+using SprocketMultiplayer.Core;
 
-namespace SprocketMultiplayer.Core
-{
-    /// <summary>
-    /// High-level spawner interface using proper Sprocket API
-    /// Now works with IVehicleEditGateway
-    /// </summary>
-    public class Spawner : MonoBehaviour
-    {
+namespace SprocketMultiplayer {
+    public class Spawner : MonoBehaviour {
         public static Spawner Instance { get; private set; }
 
         private void Awake()
@@ -42,10 +37,9 @@ namespace SprocketMultiplayer.Core
             }
         }
 
-        /// <summary>
+
         /// Spawn a vehicle using proper Sprocket API
         /// Returns IVehicleEditGateway
-        /// </summary>
         public IVehicleEditGateway SpawnVehicle(string blueprintName, int team = 0, bool attachAI = false, Vector3? position = null)
         {
             Vector3 spawnPos = position ?? new Vector3(0, 2, 0);
@@ -60,18 +54,18 @@ namespace SprocketMultiplayer.Core
 
                 if (gateway != null)
                 {
-                    MelonLogger.Msg($"[Spawner] ✓ Successfully spawned: {blueprintName}");
+                    MelonLogger.Msg($"[Spawner] Successfully spawned: {blueprintName}");
                     
-                    // TODO: Apply team assignment if needed
+                    // TODO: Apply team assignment
                     if (team != 0)
                     {
-                        MelonLogger.Msg($"[Spawner] TODO: Assign vehicle to team {team}");
+                        MelonLogger.Msg($"[Spawner] TODO METHOD: Assign vehicle to team {team}");
                     }
                     
-                    // TODO: Attach AI if needed
+                    // TODO: Maybe attach ai?
                     if (attachAI)
                     {
-                        MelonLogger.Msg("[Spawner] TODO: Attach AI to vehicle");
+                        MelonLogger.Msg("[Spawner] --");
                     }
 
                     return gateway;
@@ -89,10 +83,8 @@ namespace SprocketMultiplayer.Core
                 return null;
             }
         }
-
-        /// <summary>
+        
         /// Spawn vehicle synchronously and return the gateway
-        /// </summary>
         public IVehicleEditGateway SpawnVehicleSync(string blueprintName, Vector3 position, Quaternion rotation)
         {
             try
@@ -112,10 +104,8 @@ namespace SprocketMultiplayer.Core
                 return null;
             }
         }
-
-        /// <summary>
+        
         /// Spawn vehicle and assign control to local player
-        /// </summary>
         public IVehicleEditGateway SpawnAndControl(string blueprintName, Vector3? position = null)
         {
             Vector3 spawnPos = position ?? new Vector3(0, 2, 0);
@@ -137,10 +127,8 @@ namespace SprocketMultiplayer.Core
             
             return gateway;
         }
-
-        /// <summary>
+        
         /// Get list of all available vehicle blueprints
-        /// </summary>
         public string[] GetAvailableVehicles()
         {
             try
@@ -156,10 +144,8 @@ namespace SprocketMultiplayer.Core
                 return Array.Empty<string>();
             }
         }
-
-        /// <summary>
+        
         /// Get list of available vehicles as List
-        /// </summary>
         public List<string> GetAvailableVehiclesList()
         {
             try
@@ -173,10 +159,8 @@ namespace SprocketMultiplayer.Core
                 return new List<string>();
             }
         }
-
-        /// <summary>
+        
         /// Spawn a random vehicle from available blueprints
-        /// </summary>
         public IVehicleEditGateway SpawnRandomVehicle(Vector3? position = null)
         {
             var vehicles = GetAvailableVehicles();
@@ -191,10 +175,8 @@ namespace SprocketMultiplayer.Core
             MelonLogger.Msg($"[Spawner] Spawning random vehicle: {randomVehicle}");
             return SpawnVehicle(randomVehicle, position: position);
         }
-
-        /// <summary>
+        
         /// Check if VehicleSpawner has any vehicles loaded
-        /// </summary>
         public bool HasVehiclesAvailable()
         {
             try
@@ -207,10 +189,9 @@ namespace SprocketMultiplayer.Core
                 return false;
             }
         }
-
-        /// <summary>
+        
+        
         /// Check if a specific vehicle exists
-        /// </summary>
         public bool HasVehicle(string blueprintName)
         {
             try
@@ -224,9 +205,8 @@ namespace SprocketMultiplayer.Core
             }
         }
 
-        /// <summary>
+
         /// Get the default vehicle name
-        /// </summary>
         public string GetDefaultVehicle()
         {
             try
@@ -240,9 +220,8 @@ namespace SprocketMultiplayer.Core
             }
         }
 
-        /// <summary>
+
         /// Despawn (destroy and deregister) a vehicle via gateway
-        /// </summary>
         public void DespawnVehicle(IVehicleEditGateway gateway)
         {
             if (gateway == null)
@@ -287,10 +266,8 @@ namespace SprocketMultiplayer.Core
                 MelonLogger.Error($"[Spawner] Failed to despawn vehicle: {e.Message}");
             }
         }
-
-        /// <summary>
+        
         /// Check if the proper spawning API is available
-        /// </summary>
         public bool IsSpawnerReady()
         {
             try
@@ -304,17 +281,15 @@ namespace SprocketMultiplayer.Core
                 return false;
             }
         }
-
-        /// <summary>
+        
         /// Force re-initialization of VehicleSpawner
-        /// </summary>
         public void Reinitialize()
         {
             try
             {
                 MelonLogger.Msg("[Spawner] Reinitializing VehicleSpawner...");
                 VehicleSpawner.Initialize();
-                MelonLogger.Msg($"[Spawner] ✓ Reinitialized with {VehicleSpawner.GetTankCount()} vehicles");
+                MelonLogger.Msg($"[Spawner] Reinitialized with {VehicleSpawner.GetTankCount()} vehicles");
             }
             catch (Exception e)
             {

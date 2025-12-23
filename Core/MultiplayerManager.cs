@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using Il2CppInterop.Runtime;
 using MelonLoader;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -18,6 +20,7 @@ namespace SprocketMultiplayer.Core {
 
         private bool sceneReady;
         private bool spawnStarted;
+        private bool factoryReady;
 
         // ===== TANK SELECTION =====
 
@@ -48,7 +51,7 @@ namespace SprocketMultiplayer.Core {
             return VehicleSpawner.GetDefaultTankId();
         }
 
-        /// Get all available tanks from the database
+        // Get all available tanks from the database
         public List<string> GetAvailableTanks()
         {
             return VehicleSpawner.GetAvailableTankIds();
@@ -56,7 +59,7 @@ namespace SprocketMultiplayer.Core {
 
         // ===== SCENE INITIALIZATION =====
 
-        /// Called when a multiplayer scene loads
+        // Called when a multiplayer scene loads
         public void OnSceneLoaded() {
             MelonLogger.Msg("[MP] OnSceneLoaded - Starting delayed initialization...");
             MelonCoroutines.Start(DelayedSceneInit());
@@ -68,15 +71,12 @@ namespace SprocketMultiplayer.Core {
         MelonLogger.Msg("========================================");
         MelonLogger.Msg("[MP] Waiting for scene to stabilize...");
         
-        // Wait for scene to fully load
+        // Wait for scene to load
         yield return new WaitForSeconds(1.5f);
         MelonLogger.Msg("[MP] ✓ Scene stabilized");
 
-        MelonLogger.Msg("[MP] ✓ Scene stabilized");
-
+        // Initialize VehicleSpawner
         MelonLogger.Msg("[MP] Initializing VehicleSpawner...");
-        
-        // Ensure VehicleSpawner is ready
         try {
             VehicleSpawner.EnsureInitialized();
             int tankCount = VehicleSpawner.GetTankCount();
@@ -86,9 +86,6 @@ namespace SprocketMultiplayer.Core {
             yield break;
         }
         
-        // Wait a bit more for factory to be available
-        yield return new WaitForSeconds(0.5f);
-
         sceneReady = true;
         MelonLogger.Msg("[MP] ✓ Scene ready flag set");
 
@@ -99,72 +96,34 @@ namespace SprocketMultiplayer.Core {
         
         MelonLogger.Msg($"[MP] Network Status: IsHost={NetworkManager.Instance.IsHost}, IsClient={NetworkManager.Instance.IsClient}");
 
-        // Only host starts spawn process automatically
         if (NetworkManager.Instance.IsHost) {
-            MelonLogger.Msg("[MP] HOST MODE - Waiting for factory to be available...");
-            MelonLogger.Msg("[MP] Note: Factory requires an existing vehicle in scene");
+            MelonLogger.Msg("[MP] HOST MODE - Waiting for factory...");
             
-            // Critical: Wait for IVehicleFactory to exist in scene
-            // The factory only exists after the first vehicle is spawned by the game
-            bool factoryFound = false;
-            int attempts = 0;
+            // Try to initialize the factory through game systems
+            yield return new WaitForSeconds(1f);
             
-            while (!factoryFound && attempts < 20) {
-                attempts++;
-                MelonLogger.Msg($"[MP] Factory search attempt {attempts}/20...");
-                
-                // Try to find any existing vehicle (game may have spawned one)
-                var existingVehicles = Object.FindObjectsOfType<MonoBehaviour>();
-                int vehicleCount = 0;
-                
-                foreach (var obj in existingVehicles) {
-                    if (obj == null) continue;
-                    
-                    string typeName = obj.GetType().FullName;
-                    if (typeName.Contains("Vehicle") && !typeName.Contains("UI") && !typeName.Contains("Menu")) {
-                        vehicleCount++;
-                        
-                        var il2cppObj = obj as Il2CppSystem.Object;
-                        if (il2cppObj != null) {
-                            var gateway = il2cppObj.TryCast<IVehicleEditGateway>();
-                            if (gateway != null) {
-                                MelonLogger.Msg($"[MP] ✓ Found existing vehicle gateway (type: {typeName})");
-                                MelonLogger.Msg("[MP] ✓ Factory should now be available!");
-                                factoryFound = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                if (!factoryFound) {
-                    if (vehicleCount > 0) {
-                        MelonLogger.Msg($"[MP] Found {vehicleCount} vehicle-like objects but no gateways");
-                    } else {
-                        MelonLogger.Msg($"[MP] No vehicles found in scene yet");
-                    }
-                    yield return new WaitForSeconds(1f);
-                }
-            }
+            MelonLogger.Msg("[MP] ========================================");
+            MelonLogger.Msg("[MP] INITIALIZING FACTORY");
+            MelonLogger.Msg("[MP] ========================================");
             
-            if (!factoryFound) {
-                MelonLogger.Warning("[MP] ========================================");
-                MelonLogger.Warning("[MP] ⚠ FACTORY NOT FOUND AFTER WAITING!");
-                MelonLogger.Warning("[MP] ========================================");
-                MelonLogger.Warning("[MP] The game hasn't spawned any vehicles yet.");
-                MelonLogger.Warning("[MP] ");
-                MelonLogger.Warning("[MP] MANUAL WORKAROUND:");
-                MelonLogger.Warning("[MP] 1. Press F8 to spawn a test tank");
-                MelonLogger.Warning("[MP] 2. Press F6 to start multiplayer spawn");
-                MelonLogger.Warning("[MP] ");
-                MelonLogger.Warning("[MP] Or wait for the game to spawn its initial vehicle");
-                MelonLogger.Warning("[MP] ========================================");
-                // Don't start spawn process yet
+            // Call the initialization method
+            VehicleSpawner.TryInitializeFactory();
+            
+            // Wait for factory to become available
+            yield return VehicleSpawner.WaitForFactory(10);
+            
+            if (!VehicleSpawner.IsFactoryAvailable())
+            {
+                MelonLogger.Error("[MP] ✗ Factory is not available! Cannot spawn vehicles.");
+                MelonLogger.Error("[MP] Please spawn a vehicle through the game UI first (ESC > Spawn Vehicle)");
                 yield break;
             }
             
+            MelonLogger.Msg("[MP] ✓ Factory is ready!");
+            
+            // Now spawn player vehicles
             MelonLogger.Msg("[MP] ========================================");
-            MelonLogger.Msg("[MP] ✓ FACTORY READY - STARTING SPAWN PROCESS");
+            MelonLogger.Msg("[MP] STARTING PLAYER VEHICLE SPAWN");
             MelonLogger.Msg("[MP] ========================================");
             StartSpawnProcess();
         } else {
@@ -174,6 +133,70 @@ namespace SprocketMultiplayer.Core {
         MelonLogger.Msg("[MP] DelayedSceneInit complete");
     }
 
+        // Attempt to trigger the game's normal vehicle spawn
+        // This should initialize the factory properly
+
+        private IEnumerator AttemptGameSpawn() {
+            MelonLogger.Msg("[MP] Attempting to trigger game's vehicle spawn system...");
+            factoryReady = false;
+            
+            try {
+                // Look for game's spawn system
+                var allObjects = UnityEngine.Object.FindObjectsOfType<MonoBehaviour>();
+                
+                foreach (var obj in allObjects) {
+                    if (obj == null) continue;
+                    
+                    string typeName = obj.GetType().FullName;
+                    
+                    // Look for ScenarioGameState or similar
+                    if (typeName.Contains("ScenarioGameState")) {
+                        MelonLogger.Msg($"[MP] Found game state: {typeName}");
+                        
+                        // Try to find and call spawn methods
+                        var methods = obj.GetType().GetMethods(
+                            System.Reflection.BindingFlags.Public | 
+                            System.Reflection.BindingFlags.Instance);
+                        
+                        foreach (var method in methods) {
+                            if (method.Name.Contains("Spawn") || 
+                                method.Name.Contains("Initialize") ||
+                                method.Name.Contains("Start")) {
+                                
+                                MelonLogger.Msg($"[MP] Found method: {method.Name}");
+                                
+                                // Try calling methods with no parameters
+                                if (method.GetParameters().Length == 0) {
+                                    try {
+                                        MelonLogger.Msg($"[MP] Attempting to call {method.Name}()...");
+                                        method.Invoke(obj, null);
+                                        
+                                        // Wait to see if it worked
+                                        new WaitForSeconds(1f);
+                                        factoryReady = true; // mark as ready when done
+                                        
+                                        // Check if vehicles spawned
+                                        var vehicles = UnityEngine.Object.FindObjectsOfType<MonoBehaviour>()
+                                            .Where(o => o != null && o.GetType().FullName.Contains("Vehicle"));
+                                        
+                                        if (vehicles.Any()) {
+                                            MelonLogger.Msg("[MP] ✓ Game spawned vehicles!");
+                                        }
+                                    } catch (Exception ex) {
+                                        MelonLogger.Msg($"[MP] Method call failed: {ex.Message}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                MelonLogger.Error($"[MP] AttemptGameSpawn error: {ex.Message}");
+            } 
+            
+            MelonLogger.Warning("[MP] Could not trigger game spawn");
+            yield return false;
+        }
         public void ManuallyStartSpawn() {
             if (!sceneReady) {
                 MelonLogger.Warning("[MP] Scene not ready yet!");
@@ -265,14 +288,14 @@ namespace SprocketMultiplayer.Core {
                         if (NetworkManager.Instance != null)
                             NetworkManager.Instance.Send($"SPAWN:{nickname}:{tankName}");
                     } else {
-                        MelonLogger.Error($"[MP] ✗ Failed to spawn tank for {nickname}!");
+                        MelonLogger.Error($"[MP] Failed to spawn tank for {nickname}!");
                     }
             
                     // Longer delay between spawns to let game process each vehicle
                     yield return new WaitForSeconds(1f);
                 }
 
-                MelonLogger.Msg("[MP] ✓ Spawn queue complete!");
+                MelonLogger.Msg("[MP] Spawn queue complete!");
             }
 
         // ===== SPAWN LOGIC =====
@@ -367,7 +390,7 @@ namespace SprocketMultiplayer.Core {
                             MelonLogger.Msg($"[MP] Destroyed vehicle for {kv.Key}");
                         }
                     }
-                    catch (System.Exception ex) {
+                    catch (Exception ex) {
                         MelonLogger.Warning($"[MP] Failed to destroy vehicle GameObject: {ex.Message}");
                     }
                 }

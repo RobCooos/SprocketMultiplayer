@@ -211,9 +211,9 @@ namespace SprocketMultiplayer
 
         private void OnSceneChanged(Scene scene)
         {
-            MelonLogger.Msg($"========================================");
+            MelonLogger.Msg("========================================");
             MelonLogger.Msg($"Scene Changed: {scene.name}");
-            MelonLogger.Msg($"========================================");
+            MelonLogger.Msg("========================================");
             
             // Check if multiplayer is active
             if (NetworkManager.Instance == null)
@@ -256,9 +256,7 @@ namespace SprocketMultiplayer
             }
         }
 
-        private bool IsGameplayScene(string sceneName)
-        {
-            // Known gameplay scenes in Sprocket
+        private bool IsGameplayScene(string sceneName) {
             string[] gameplayScenes = new string[] {
                 "Railway",
                 "Sandbox"
@@ -286,8 +284,8 @@ namespace SprocketMultiplayer
                 GameObject consoleGO = new GameObject("SprocketConsole");
                 GameObject.DontDestroyOnLoad(consoleGO);
 
-                var il2cppType = Il2CppType.From(typeof(SprocketMultiplayer.UI.Console));
-                var comp = consoleGO.AddComponent(il2cppType)?.Cast<SprocketMultiplayer.UI.Console>();
+                var il2cppType = Il2CppType.From(typeof(UI.Console));
+                var comp = consoleGO.AddComponent(il2cppType)?.Cast<UI.Console>();
 
                 if (comp != null)
                 {
@@ -296,7 +294,7 @@ namespace SprocketMultiplayer
                 }
                 else
                 {
-                    MelonLogger.Error("Failed to cast or attach IL2CPP Console component.");
+                    MelonLogger.Error("Failed to cast or attach Console component.");
                 }
             }
             catch (Exception ex)
